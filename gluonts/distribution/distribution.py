@@ -274,5 +274,6 @@ def _sample_multiple(
     kwargs_expanded = {
         k: _expand_param(v, num_samples) for k, v in kwargs.items()
     }
-    samples = sample_func(*args_expanded, **kwargs_expanded)
+
+    samples = sample_func(*args_expanded, **kwargs_expanded)#(num_sample, bs, pred_length, obs_dim, obs_dim)
     return samples

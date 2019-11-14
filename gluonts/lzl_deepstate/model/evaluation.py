@@ -23,8 +23,8 @@ import numpy as np
 import pandas as pd
 
 # First-party imports
-from gluonts.model.forecast import Forecast, Quantile
-from gluonts.gluonts_tqdm import tqdm
+from .forecast import Forecast, Quantile
+from tqdm import tqdm
 
 
 @lru_cache()
@@ -334,8 +334,6 @@ class Evaluator:
         )
 
     @staticmethod
-    # 结果越小 说明 0 越多， target 比 quantile 大的越多
-    # 结果越大 说明 1 越多， target 比 quantile 小的越多
     def coverage(target, quantile_forecast):
         return np.mean((target < quantile_forecast))
 

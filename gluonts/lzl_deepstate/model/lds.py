@@ -10,13 +10,13 @@
 # on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
 # express or implied. See the License for the specific language governing
 # permissions and limitations under the License.
-import tensorflow_probability as tfp
+
 import tensorflow as tf
 from tensorflow import Tensor
 import numpy as np
 
-from ..utils import make_nd_diag, _broadcast_param,MultivariateGaussian
-from gluonts.support.linalg_util import jitter_cholesky
+from ..utils import make_nd_diag, _broadcast_param,MultivariateGaussian,Gaussian
+from ..utils.func import jitter_cholesky, mxnet_swapaxes
 # print('emission , innovation ,transition ,noise_std,residuals 维度如下：'
 #               ,self.emission_coeff[0].shape , self.innovation_coeff[0].shape , self.transition_coeff[0].shape , self.noise_std[0].shape , self.residuals[0].shape)
 
@@ -246,6 +246,8 @@ class LDS(object):
 
         _, mean, cov, log_p_seq = tf.while_loop(cond, body,
                                                 loop_vars=[t, mean, cov, log_p_seq])
+        # print('log_p_seq stack shape' , log_p_seq.stack().shape)
+        # exit()
 
         log_p_seq = tf.transpose(
             tf.squeeze(log_p_seq.stack() ,axis=-1)
@@ -258,7 +260,7 @@ class LDS(object):
 
     def sample(
         self, num_samples = None, scale = None
-    ) -> Tensor:
+    ) :
         r"""
         Generates samples from the LDS: p(z_1, z_2, \ldots, z_{`seq_length`}).
 
@@ -282,21 +284,31 @@ class LDS(object):
 
         # Sample observation noise for all time steps
         # noise_std: (batch_size, seq_length, obs_dim, 1)
-        noise_std = F.stack(*self.noise_std, axis=1).expand_dims(axis=-1)
+        noise_std = tf.expand_dims(
+            tf.transpose(self.noise_std , [1,0,2])
+            ,axis=-1
+        ) #(bs,pred_len , obs_dim ,obs_dim)
 
         # samples_eps_obs[t]: (num_samples, batch_size, obs_dim, 1)
         samples_eps_obs = (
-            Gaussian(noise_std.zeros_like(), noise_std)
-            .sample(num_samples)
-            .split(axis=-3, num_outputs=self.seq_length, squeeze_axis=True)
-        )
+            tf.transpose(
+                Gaussian(tf.zeros_like(noise_std), noise_std).sample(num_samples),
+                [2,0,1,3,4]
+            )
+        ) #(pred_len, num_sample, bs, obs_dim, obs_dim)
+
 
         # Sample standard normal for all time steps
         # samples_eps_std_normal[t]: (num_samples, batch_size, obs_dim, 1)
         samples_std_normal = (
-            Gaussian(noise_std.zeros_like(), noise_std.ones_like())
-            .sample(num_samples)
-            .split(axis=-3, num_outputs=self.seq_length, squeeze_axis=True)
+            tf.transpose(
+                Gaussian(tf.zeros_like(noise_std), tf.ones_like(noise_std)).sample(num_samples)
+                ,[2,0,1,3,4]
+            )
+        )
+        print('tensorflow : samples_eps_obs, samples_std_normal的维度 ：'
+              , samples_eps_obs.shape
+              , samples_std_normal.shape
         )
 
         # Sample the prior state.
@@ -306,15 +318,21 @@ class LDS(object):
         # We add positive tolerance to the diagonal to avoid numerical issues.
         # Note that `jitter_cholesky` adds positive tolerance only if the decomposition without jitter fails.
         state = MultivariateGaussian(
-            self.prior_mean,
+            self.prior_mean, #(bs, latent_dim)
             jitter_cholesky(
-                F, self.prior_cov, self.latent_dim, float_type=np.float32
-            ),
+                self.prior_cov, self.latent_dim, float_type=np.float32
+            ), #(bs, latent_dim , latent_dim)
         )
-        samples_lat_state = state.sample(num_samples).expand_dims(axis=-1)
+        samples_lat_state = tf.expand_dims(
+            state.sample(num_samples)
+            ,axis=-1
+        )
+        t=0
+        samples_seq = tf.TensorArray(size=self.seq_length , dtype=tf.float32)
 
-        samples_seq = []
-        for t in range(self.seq_length):
+        def cond(t,samples_lat_state,samples_seq):
+            return tf.less(t, self.seq_length)
+        def body(t,samples_lat_state,samples_seq):
             # Expand all coefficients to include samples in axis 0
             # emission_coeff_t: (num_samples, batch_size, obs_dim, latent_dim)
             # transition_coeff_t:
@@ -329,52 +347,63 @@ class LDS(object):
                     self.transition_coeff[t],
                     self.innovation_coeff[t],
                 ]
-            ]
+            ]  # (num_sample, bs, obs, latent) (num_sample, bs, latent, latent) (num_sample, bs, obs, latent)
 
             # Expand residuals as well
             # residual_t: (num_samples, batch_size, obs_dim, 1)
             residual_t = (
                 _broadcast_param(
-                    self.residuals[t].expand_dims(axis=-1),
+                    tf.expand_dims(self.residuals[t], axis=-1),
                     axes=[0],
                     sizes=[num_samples],
                 )
                 if num_samples is not None
-                else self.residuals[t].expand_dims(axis=-1)
+                else tf.expand_dims(self.residuals[t], axis=-1)
             )
 
             # (num_samples, batch_size, 1, obs_dim)
             samples_t = (
-                F.linalg_gemm2(emission_coeff_t, samples_lat_state)
-                + residual_t
-                + samples_eps_obs[t]
+                    tf.linalg.matmul(emission_coeff_t, samples_lat_state)
+                    + residual_t
+                    + samples_eps_obs[t]
             )
+
             samples_t = (
-                samples_t.swapaxes(dim1=2, dim2=3)
+                mxnet_swapaxes(samples_t, dim1=2, dim2=3)
                 if num_samples is not None
-                else samples_t.swapaxes(dim1=1, dim2=2)
+                else mxnet_swapaxes(samples_t, dim1=1, dim2=2)
             )
-            samples_seq.append(samples_t)
+
+            samples_seq = samples_seq.write(t ,samples_t)
 
             # sample next state: (num_samples, batch_size, latent_dim, 1)
-            samples_lat_state = F.linalg_gemm2(
+            samples_lat_state = tf.linalg.matmul(
                 transition_coeff_t, samples_lat_state
-            ) + F.linalg_gemm2(
+            ) + tf.linalg.matmul(
                 innovation_coeff_t, samples_std_normal[t], transpose_a=True
             )
 
+            return t+1,samples_lat_state,samples_seq
+
+        _,_,samples_seq = tf.while_loop(cond, body ,loop_vars=[t,samples_lat_state,samples_seq])
+
+
+        #(?,num_samples, batch_size, 1, obs_dim)
+
+        # 这里需要修改成 while_loop
         # (num_samples, batch_size, seq_length, obs_dim)
-        samples = F.concat(*samples_seq, dim=-2)
+        samples = tf.transpose(tf.squeeze(samples_seq.stack(),axis=-2),[1,2,0,3])
+
         return (
             samples
             if scale is None
-            else F.broadcast_mul(
+            else tf.math.multiply(
                 samples,
-                scale.expand_dims(axis=1).expand_dims(axis=0)
+                tf.expand_dims(tf.expand_dims(scale,axis=1),axis=0)
                 if num_samples is not None
                 else scale.expand_dims(axis=1),
             )
-        )
+        )# (num_samples, batch_size, seq_length, obs_dim)
 
     def sample_marginals(
         self, num_samples = None, scale = None

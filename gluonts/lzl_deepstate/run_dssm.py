@@ -2,6 +2,7 @@
 # author : joelonglin
 
 from gluonts.lzl_deepstate.model.deepstate import DeepStateNetwork
+import pickle
 from gluonts.lzl_deepstate.utils.config import get_image_config , reload_config
 from gluonts.lzl_deepstate.model.issm import LevelISSM, LevelTrendISSM,SeasonalityISSM
 import os
@@ -19,10 +20,11 @@ if ('/lzl_deepstate' not in os.getcwd()):
 configuration = tf.compat.v1.ConfigProto()
 configuration.gpu_options.allow_growth = True
 with tf.compat.v1.Session(config=configuration) as sess:
-    dssm = DeepStateNetwork(config=config,sess=sess).build_graph().build_forward().initialize_variables()
-
-
+    dssm = DeepStateNetwork(config=config,sess=sess)\
+        .build_module().build_train_forward().build_predict_forward().initialize_variables()
     dssm.train()
+    dssm.predict()
+    dssm.evaluate()
 
 
 

@@ -1,15 +1,28 @@
 from .config import (reload_config,get_image_config)
-from .func import (weighted_average ,make_nd_diag,_make_2_block_diagonal,_make_block_diagonal,_broadcast_param)
-from .distribution import MultivariateGaussian
+from .func import (
+    weighted_average
+    ,make_nd_diag
+    ,batch_diagonal
+    ,jitter_cholesky
+    ,_make_2_block_diagonal
+    ,_make_block_diagonal
+    ,_broadcast_param
+    ,erf
+)
+from .distribution import MultivariateGaussian, Gaussian
 __all__ = [
     "reload_config",
     "get_image_config",
     "weighted_average",
     "make_nd_diag",
+    "batch_diagonal",
+    "jitter_cholesky",
     "_make_2_block_diagonal",
     "_make_block_diagonal",
     "_broadcast_param",
-    "MultivariateGaussian"
+    "MultivariateGaussian",
+    "Gaussian",
+    "erf"
 ]
 
 # fix Sphinx issues, see https://bit.ly/2K2eptM

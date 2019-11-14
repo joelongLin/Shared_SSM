@@ -7,23 +7,15 @@ import json
 
 
 def reload_config(FLAGS):
-    # If we are reloading a model, overwrite the flags
-    if FLAGS.reload_model is not '':
-        with open('%s/%s' % (os.path.dirname(FLAGS.reload_model), 'config.json')) as data_file:
-            config_dict = json.load(data_file)
 
-        for key, value in config_dict.items():
-            attr_remove = ['gpu', 'run_name', 'logs_dir', 'n_steps_gen', 'reload_model', 'display_step', 'generate_step']
-            # attr_remove = ['gpu', 'n_steps_gen', 'reload_model', 'display_step', 'generate_step']
-            if key not in attr_remove:
-                FLAGS.__setattr__(key, value)
     return FLAGS
 
 
 def get_image_config():
     cl = tf.app.flags
-
-    cl.DEFINE_string('reload_model' ,'','model to reload')
+    relod_model =  'logs/electricity/Nov_11_11:04:04_2019/model_params/best_electricity_336_168'
+    # relod_model = ''
+    cl.DEFINE_string('reload_model' ,relod_model,'model to reload')
     cl.DEFINE_string('logs_dir','logs/electricity','file to print log')
 
     # network configuration

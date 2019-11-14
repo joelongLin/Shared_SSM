@@ -17,6 +17,7 @@ from typing import Any, Callable, Iterator, List, Optional
 # Third-party imports
 import mxnet as mx
 import numpy as np
+import pickle
 
 # First-party imports
 from gluonts.distribution import Distribution, DistributionOutput
@@ -37,6 +38,7 @@ BlockType = mx.gluon.Block
 
 
 LOG_CACHE = set([])
+from ..trainer._base import whetherInputInList
 
 
 def log_once(msg):
@@ -190,17 +192,20 @@ class SampleForecastGenerator(ForecastGenerator):
         **kwargs
     ) -> Iterator[Forecast]:
         no_batch = 0
-        for batch in inference_data_loader: # 这里会有 100个 batch
-            no_batch += 1 ; print('当前产生第 ' , no_batch ,'  个 batch')
+        # test_all_result = []; input_names.append('forecast_start')
+        for batch in inference_data_loader: # 这里会产生 batch_size 个 sample 组成的batch
+            no_batch += 1 ;
             inputs = [batch[k] for k in input_names] # 每个batch 里面存在 16 个样本
-            if no_batch == 141:
-                print('当前 batch 的样本数量:' , inputs[0].shape[0])
-            # print(input_names)
-            # for input in inputs:
-            #     print(input.shape)
-            # 注意要在这里取所有的结果
-            # exit()
-            outputs = prediction_net(*inputs).asnumpy()
+
+            # inputs = [np.squeeze(batch[k].asnumpy(), axis=0)
+            #           if isinstance(batch[k] , mx.nd.NDArray)
+            #           else batch[k][0]
+            #           for k in input_names]
+            # test_all_result.append(inputs)
+            # print('当前第 ' ,no_batch , '正输入 test_all_data(%d 存量) 中'%(len(test_all_result)) )
+            # continue
+
+            outputs = prediction_net(*inputs).asnumpy() #(bs, num_eval_sample, prediction_length)
             if output_transform is not None:
                 outputs = output_transform(batch, outputs)
             if num_eval_samples:
@@ -218,6 +223,8 @@ class SampleForecastGenerator(ForecastGenerator):
                 ] #(batch_size , num_sample , predict_len)
                 assert len(outputs[0]) == num_eval_samples
             i = -1
+            #相当于把每一个 batch 的结果都封装到一个 SampleForecast的类里面
+            print('当前正在处理第 %d 个 batch_no 的结果'%(no_batch))
             for i, output in enumerate(outputs):
                 yield SampleForecast(
                     output,
@@ -229,3 +236,9 @@ class SampleForecastGenerator(ForecastGenerator):
                     info=batch["info"][i] if "info" in batch else None,
                 )
             assert i + 1 == len(batch["forecast_start"])
+
+        # print('test_all_result 的长度大小为：', len(test_all_result))
+        # with open('../lzl_deepstate/data/test_electricity_336_168.pkl', 'wb') as fp:
+        #     pickle.dump(test_all_result, fp)
+        # print('已获取全部的测试数据')
+        # exit()

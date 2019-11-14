@@ -269,7 +269,8 @@ class LDS(Distribution):
                 self.innovation_coeff[t],
                 transpose_a=True,
             )
-
+        # print('log_p_seq 大小以及维度: ', len(log_p_seq),log_p_seq[0].shape)
+        # exit()
         # Return sequence of log likelihoods, as well as
         # final mean and covariance of p(l_T | l_{T-1} where T is seq_length
         return F.concat(*log_p_seq, dim=1), mean, cov
@@ -308,7 +309,8 @@ class LDS(Distribution):
             Gaussian(noise_std.zeros_like(), noise_std)
             .sample(num_samples)
             .split(axis=-3, num_outputs=self.seq_length, squeeze_axis=True)
-        )
+        ) # pred_len * (num_sample , bs, obs,1)
+
 
         # Sample standard normal for all time steps
         # samples_eps_std_normal[t]: (num_samples, batch_size, obs_dim, 1)
@@ -316,7 +318,7 @@ class LDS(Distribution):
             Gaussian(noise_std.zeros_like(), noise_std.ones_like())
             .sample(num_samples)
             .split(axis=-3, num_outputs=self.seq_length, squeeze_axis=True)
-        )
+        ) # pred_length*(num_sample , bs ,obs,1)
 
         # Sample the prior state.
         # samples_lat_state: (num_samples, batch_size, latent_dim, 1)
@@ -325,10 +327,10 @@ class LDS(Distribution):
         # We add positive tolerance to the diagonal to avoid numerical issues.
         # Note that `jitter_cholesky` adds positive tolerance only if the decomposition without jitter fails.
         state = MultivariateGaussian(
-            self.prior_mean,
+            self.prior_mean, #(bs, latent_dim)
             jitter_cholesky(
                 F, self.prior_cov, self.latent_dim, float_type=np.float32
-            ),
+            ), #(bs, latent_dim , latent_dim)
         )
         samples_lat_state = state.sample(num_samples).expand_dims(axis=-1)
 
@@ -350,6 +352,7 @@ class LDS(Distribution):
                 ]
             ]
 
+
             # Expand residuals as well
             # residual_t: (num_samples, batch_size, obs_dim, 1)
             residual_t = (
@@ -368,6 +371,7 @@ class LDS(Distribution):
                 + residual_t
                 + samples_eps_obs[t]
             )
+
             samples_t = (
                 samples_t.swapaxes(dim1=2, dim2=3)
                 if num_samples is not None
@@ -393,7 +397,7 @@ class LDS(Distribution):
                 if num_samples is not None
                 else scale.expand_dims(axis=1),
             )
-        )
+        )# (num_samples, batch_size, seq_length, obs_dim)
 
     def sample_marginals(
         self, num_samples: Optional[int] = None, scale: Optional[Tensor] = None

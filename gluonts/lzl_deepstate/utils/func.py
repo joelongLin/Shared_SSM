@@ -12,8 +12,10 @@ def make_nd_diag(x, d) :
 def _broadcast_param(param, axes, sizes):
     for axis, size in zip(axes, sizes):
         param_exp = tf.expand_dims(param,axis = axis)
-        new_shape = list(param_exp.shape) ; new_shape[-1] = new_shape[-1]*size
-        param = tf.broadcast_to(param_exp, new_shape)
+        tile_times = [1]*len(param_exp.shape) ; tile_times[axis] = tile_times[axis]*size
+        param = tf.tile(param_exp ,tile_times)
+        # new_shape = tf.TensorShape(new_shape)
+        # param = tf.broadcast_to(param_exp, new_shape )
     return param
 
 def _make_block_diagonal(blocks):
@@ -102,3 +104,166 @@ def weighted_average(
         return tf.math.reduce_sum(weighted_tensor,axis=axis) / sum_weights
     else:
         return tf.math.reduce_mean(x ,axis=axis)
+
+
+
+def erf(x):
+    # Using numerical recipes approximation for erf function
+    # accurate to 1E-7
+
+    ones = tf.ones_like(x)
+    zeros = tf.zeros_like(x)
+    t = ones / (ones + 0.5 * tf.math.abs(x))
+
+    coefficients = [
+        1.00002368,
+        0.37409196,
+        0.09678418,
+        -0.18628806,
+        0.27886807,
+        -1.13520398,
+        1.48851587,
+        -0.82215223,
+        0.17087277,
+    ]
+
+    inner = zeros
+    for c in coefficients[::-1]:
+        inner = t * (c + inner)
+
+    res = ones - t * tf.math.exp(
+        (inner - 1.26551223 - tf.math.square(x))
+    )
+    return tf.where(tf.math.greater_equal(x, zeros), res, -1.0 * res)
+
+# 产生适用于 tensorflow 的shape list
+def mxnet_slice(tensor : Tensor, axis:int, begin:int, end:int):
+    begin_list = [0]*len(tensor.shape) ; begin_list[axis] = begin
+    end_list = [-1]*len(tensor.shape) ; end_list[axis] = end-begin
+    result = tf.slice(tensor, begin=begin_list , size=end_list)
+    return result
+
+def mxnet_swapaxes(tensor , dim1, dim2):
+    perm = list(range(len(tensor.shape)))
+    perm[dim1] = dim2
+    perm[dim2] = dim1
+    return tf.transpose(tensor, perm)
+
+
+def batch_diagonal(
+    matrix,
+    num_data_points = None,
+) :
+    """
+    This function extracts the diagonal of a batch matrix.
+
+    Parameters
+    ----------
+    matrix
+        matrix of shape (batch_size, num_data_points, num_data_points).
+    num_data_points
+        Number of rows in the kernel_matrix.
+
+    Returns
+    -------
+    Tensor
+        Diagonals of kernel_matrix of shape (batch_size, num_data_points, 1).
+
+    """
+    return tf.linalg.matmul(
+        tf.math.multiply(
+            tf.eye(num_data_points), matrix
+        ),
+        tf.ones_like(mxnet_slice(matrix, axis=2, begin=0, end=1)),
+    )
+
+
+# noinspection PyMethodOverriding,PyPep8Naming
+def jitter_cholesky(
+    matrix,
+    num_data_points = None,
+    float_type = np.float64,
+    max_iter_jitter: int = 10,
+    neg_tol = -1e-8,
+    diag_weight = 1e-6,
+    increase_jitter = 10,
+) :
+    """
+    This function applies the jitter method.  It iteratively tries to compute the Cholesky decomposition and
+    adds a positive tolerance to the diagonal that increases at each iteration until the matrix is positive definite
+    or the maximum number of iterations has been reached.
+
+    Parameters
+    ----------
+    matrix
+        Kernel matrix of shape (batch_size, num_data_points, num_data_points).
+    num_data_points
+        Number of rows in the kernel_matrix.
+    ctx
+        Determines whether to compute on the cpu or gpu.
+    float_type
+        Determines whether to use single or double precision.
+    max_iter_jitter
+        Maximum number of iterations for jitter to iteratively make the matrix positive definite.
+    neg_tol
+        Parameter in the jitter methods to eliminate eliminate matrices with diagonal elements smaller than this
+        when checking if a matrix is positive definite.
+    diag_weight
+            Multiple of mean of diagonal entries to initialize the jitter.
+    increase_jitter
+        Each iteration multiply by jitter by this amount
+    Returns
+    -------
+    Optional[Tensor]
+        The method either fails to make the matrix positive definite within the maximum number of iterations
+        and outputs an error or succeeds and returns the lower triangular Cholesky factor `L`
+        of shape (batch_size, num_data_points, num_data_points)
+    """
+    num_iter = 0
+    diag = batch_diagonal(
+        matrix, num_data_points
+    )  # shape (batch_size, num_data_points, 1)
+
+    diag_mean = tf.expand_dims(
+        tf.math.reduce_mean(diag, axis=1),
+        axis=2
+    )  # shape (batch_size, 1, 1)
+    jitter = tf.zeros_like(diag)  # shape (batch_size, num_data_points, 1)
+    # Ensure that diagonal entries are numerically non-negative, as defined by neg_tol
+    # TODO: Add support for symbolic case: Cannot use < operator with symbolic variables
+    whether_positive_definite = tf.math.reduce_sum(
+        tf.where(tf.math.less_equal(diag,neg_tol)
+                 ,tf.ones_like(diag) ,tf.zeros_like(diag)
+        )
+    ) > 0
+
+    while num_iter <= max_iter_jitter:
+        try:
+            L = tf.linalg.cholesky(
+                tf.math.add(
+                    matrix,
+                    tf.math.multiply(
+                        tf.eye(num_data_points,  dtype=float_type),
+                        jitter,
+                    ),
+                )
+            )#(bs ,num_data_points , num_data_points)
+            # gpu will not throw error but will store nans. If nan, L.sum() = nan and
+            # L.nansum() computes the sum treating nans as zeros so the error tolerance can be large.
+            # for axis = Null, nansum() and sum() will sum over all elements and return scalar array with shape (1,)
+            # TODO: 因为tensorflow无法eager到数据，所以assert 和 if 的判断都无用
+            # nan_to_zero_L = tf.where(tf.math.is_nan(L) , tf.zeros_like(L) , tf.ones_like(L))
+            # assert tf.math.abs(tf.math.reduce_sum(nan_to_zero_L) - tf.math.reduce_sum(L)) <= 1e-1
+            return L
+        except:
+            if num_iter == 0:
+                # Initialize the jitter: constant jitter per each batch
+                jitter = (
+                    tf.math.multiply(diag_mean, tf.ones_like(jitter))
+                    * diag_weight
+                )
+            else:
+                jitter = jitter * increase_jitter
+        finally:
+            num_iter += 1
+

@@ -10,8 +10,12 @@ from ..utils import make_nd_diag,weighted_average
 from tensorflow import Tensor
 from .lds import LDSArgsProj ,LDS
 from .scaler import MeanScaler,NOPScaler
-from .data_loader import DataLoader
+from .data_loader import DataLoader,GroundTruthLoader
 from tqdm import tqdm
+from .forecast import SampleForecast
+from .evaluation import Evaluator
+import json
+import matplotlib.pyplot as plt
 from ...time_feature import (TimeFeature ,time_features_from_frequency_str)
 
 class FeatureEmbedder(object):
@@ -81,19 +85,20 @@ class DeepStateNetwork(object):
         self.prediction_length = config.prediction_length
         self.add_trend = config.add_trend
 
-        # input data
-        #import os
-        #print('read file dir :' , os.getcwd())
-        #exit()
+
+        # 放入数据集
         with open('data/train_{}_{}_{}.pkl'.format(self.dataset , self.past_length,self.prediction_length) , 'rb') as fp:
             self.train_data = pickle.load(fp)
-
-
-        self.data_iter =  DataLoader(self.train_data, self.config).data_iterator()
-
+        with open('data/test_{}_{}_{}.pkl'.format(self.dataset , self.past_length,self.prediction_length) , 'rb') as fp:
+            self.test_data = pickle.load(fp)
         shape_list = []
         for input in self.train_data[0]:
-           shape_list.append(input.shape)
+            shape_list.append(input.shape)
+
+        # 将数据集放入 DataLoader 中产生一个 iterator
+        self.train_iter =  DataLoader(self.train_data, self.config).data_iterator(is_train=True)
+        self.test_iter = DataLoader(self.test_data , self.config).data_iterator(is_train=False)
+
 
         # network configuration
         self.batch_size = config.batch_size
@@ -123,11 +128,11 @@ class DeepStateNetwork(object):
         self.past_seasonal_indicators = tf.placeholder(dtype=tf.float32 , shape = [self.batch_size,self.past_length , shape_list[2][1]])
         self.past_time_feat = tf.placeholder(dtype=tf.float32 , shape =[self.batch_size ,self.past_length, shape_list[3][1]])
         self.past_target = tf.placeholder(dtype=tf.float32 , shape =[self.batch_size ,self.past_length, shape_list[4][1]])
-        self.future_seasonal_indicators = tf.placeholder(dtype=tf.float32 , shape=[self.batch_size ,self.past_length, shape_list[4][1]])
+        self.future_seasonal_indicators = tf.placeholder(dtype=tf.float32 , shape=[self.batch_size ,self.prediction_length, shape_list[2][1]])
         self.future_time_feat = tf.placeholder(dtype=tf.float32 , shape=[self.batch_size ,self.prediction_length, shape_list[3][1]])
 
-    def build_graph(self):
-        with tf.variable_scope('deepstate', initializer=tf.contrib.layers.xavier_initializer()):
+    def build_module(self):
+        with tf.variable_scope('deepstate', initializer=tf.contrib.layers.xavier_initializer() , reuse=tf.AUTO_REUSE):
             self.prior_mean_model = tf.layers.Dense(units=self.issm.latent_dim(),dtype=tf.float32 ,name='prior_mean')
 
             self.prior_cov_diag_model = tf.layers.Dense(
@@ -244,7 +249,7 @@ class DeepStateNetwork(object):
         return lds, lstm_final_state
 
 
-    def build_forward(self):
+    def build_train_forward(self):
         lds, _ = self.compute_lds(
             feat_static_cat=self.feat_static_cat,
             seasonal_indicators=tf.slice(
@@ -283,11 +288,76 @@ class DeepStateNetwork(object):
         )#(bs,)
 
         self.train_result_mean = tf.math.reduce_mean(self.train_result)
-        self.train_op = tf.train.AdamOptimizer(self.config.learning_rate)\
-            .minimize(self.train_result_mean)
+        # self.train_op = tf.train.AdamOptimizer(self.config.learning_rate)\
+        #     .minimize(self.train_result_mean)
+        optimizer = tf.train.AdamOptimizer(learning_rate=self.config.learning_rate)
+        gvs = optimizer.compute_gradients(self.train_result_mean)
+        capped_gvs = [(tf.clip_by_value(grad, -1., 10.), var) for grad, var in gvs]
+        self.train_op = optimizer.apply_gradients(capped_gvs)
         # tf.squeeze(observed_context, axis=-1)
 
         return self
+
+    def build_predict_forward(self):
+        lds, lstm_state = self.compute_lds(
+            feat_static_cat=self.feat_static_cat,
+            seasonal_indicators=tf.slice(
+                self.past_seasonal_indicators
+                ,begin=[0,0,0],size=[-1,-1,-1]
+            ),
+            time_feat=tf.slice(self.past_time_feat
+                , begin=[0, 0, 0], size=[-1, -1, -1]
+            ),
+            length=self.past_length,
+        )
+
+
+
+        _, scale = self.scaler.build_forward(self.past_target, self.past_observed_values)
+
+        observed_context = tf.slice(
+            self.past_observed_values,
+             begin=[0,0,0], size=[-1,-1,-1]
+        )#(bs,seq_length , 1)
+
+        _, final_mean, final_cov = lds.log_prob(
+            x=tf.slice(
+                self.past_target,
+                begin=[0, 0, 0], size=[-1, -1, -1]
+            ),  # (bs,seq_length ,time_feat)
+            observed=tf.math.reduce_min(observed_context, axis=-1),  # (bs ,seq_length)
+            scale=scale,
+        )
+
+        # print('lstm final state shape : ',
+        #       [{'c_shape': state.c.shape, 'h_shape': state.h.shape} for state in lstm_state])
+
+        lds_prediction, _ = self.compute_lds(
+            feat_static_cat=self.feat_static_cat,
+            seasonal_indicators=self.future_seasonal_indicators,
+            time_feat=self.future_time_feat,
+            length=self.prediction_length,
+            lstm_begin_state=lstm_state,
+            prior_mean=final_mean,
+            prior_cov=final_cov,
+        )
+
+
+
+        samples = lds_prediction.sample(
+            num_samples=self.num_sample_paths, scale=scale
+        )# (num_samples, batch_size, seq_length, obs_dim)
+
+
+        # (batch_size, num_samples, prediction_length, target_dim)
+        #  squeeze last axis in the univariate case (batch_size, num_samples, prediction_length)
+        if self.univariate:
+            self.predict_result = tf.squeeze(tf.transpose(samples , [1, 0, 2, 3]),axis=3)
+        else:
+            self.predict_result = tf.transpose(samples , [1,0,2,3])
+
+        return self
+
 
     def initialize_variables(self):
         """ Initialize variables or load saved model
@@ -309,7 +379,7 @@ class DeepStateNetwork(object):
         writer_path =os.path.join( self.config.logs_dir ,
                    '_'.join(time.asctime(time.localtime(time.time())).split(' ')[1:5]))
 
-        writer = tf.summary.FileWriter( writer_path, sess.graph)
+        writer = tf.summary.FileWriter(writer_path, sess.graph)
         num_batches = self.config.num_batches_per_epoch
         best_epoch_info = {
             'epoch_no': -1,
@@ -329,8 +399,7 @@ class DeepStateNetwork(object):
 
             with tqdm(range(num_batches)) as it:
                 for batch_no in it :
-                    batch_input = next(self.data_iter)
-                    print()
+                    batch_input , _  = next(self.train_iter)
                     placeholders = [self.feat_static_cat , self.past_observed_values
                         , self.past_seasonal_indicators, self.past_time_feat, self.past_target ]
                     feed_dict = dict(zip(placeholders,batch_input))
@@ -346,7 +415,6 @@ class DeepStateNetwork(object):
                         },
                         refresh=False,
                     )
-
             toc = time.time()
             logging.info(
                 "Epoch[%d] Elapsed time %.3f seconds",
@@ -370,8 +438,10 @@ class DeepStateNetwork(object):
             if avg_epoch_loss < best_epoch_info['metric_value']:
                 best_epoch_info['metric_value'] = avg_epoch_loss
                 best_epoch_info['epoch_no'] = epoch_no
-                self.saver.save(sess, writer_path
-                                +'/best_{}_{}_{}'.format(self.dataset , self.past_length,self.prediction_length) )
+                self.save_path = os.path.join(writer_path , "model_params"
+                                 ,'best_{}_{}_{}'.format(self.dataset, self.past_length,self.prediction_length)
+                            )
+                self.saver.save(sess, self.save_path)
                 #'/{}_{}_best.ckpt'.format(self.dataset,epoch_no)
 
         logging.info(
@@ -386,3 +456,82 @@ class DeepStateNetwork(object):
 
         # save net parameters
         logging.getLogger().info("End model training")
+
+    def predict(self):
+        sess = self.sess
+        self.all_forecast_result = []
+        # 如果是 训练之后接着的 predict 直接采用之前 train 产生的save_path
+        if hasattr(self ,'save_path'):
+            path = self.save_path
+            try:
+                self.saver.restore(sess, save_path=path)
+                print('there is no problem in restoring model params')
+            except:
+                print('something bad appears')
+            finally:
+                print('whatever ! life is still fantastic !')
+
+        for batch_no in range(len(self.test_data)//self.batch_size+1):
+            test_input , other_info = next(self.test_iter)
+            placeholders = [self.feat_static_cat, self.past_observed_values
+                , self.past_seasonal_indicators, self.past_time_feat, self.past_target
+                , self.future_seasonal_indicators , self.future_time_feat]
+            feed_dict = dict(zip(placeholders, test_input))
+
+            test_output = sess.run(self.predict_result,feed_dict =  feed_dict)
+
+            outputs = [
+                np.concatenate(s)[:self.num_sample_paths]
+                for s in zip(test_output)
+            ]
+            print('当前正在处理第 %d 个 batch_no 的结果' % (batch_no))
+            for i , output in enumerate(outputs):
+                # 最后一个不满 batch_size 的放弃它
+
+                sample_forecast = SampleForecast(
+                    samples = output,
+                    start_date = other_info[0][i],
+                    freq = self.config.freq,
+                )
+                # if batch_no < len(self.test_data) // self.batch_size :
+                #     self.all_forecast_result.append(sample_forecast)
+                if batch_no*self.batch_size + i < len(self.test_data):
+                    self.all_forecast_result.append(sample_forecast)
+                else:
+                    print('%d batch %d sample was complicate , throw away' %(batch_no,i))
+                    break
+
+
+        return self.all_forecast_result
+
+
+    def evaluate(self, forecast=None):
+        ground_truth_loader = GroundTruthLoader(config=self.config)
+        ground_truth = ground_truth_loader.get_ground_truth()
+        if forecast is None:
+            forecast = self.all_forecast_result
+
+        for i in range(321):
+            plot_prob_forecasts(ground_truth[i] , forecast[i] ,i)
+
+        evaluator = Evaluator(quantiles=[0.1, 0.5, 0.9])
+        agg_metrics, item_metrics = evaluator(iter(ground_truth)
+                                              , iter(forecast)
+                                              , num_series=len(ground_truth_loader.ds.test))
+
+        print(json.dumps(agg_metrics, indent=4))
+        pass
+
+
+def plot_prob_forecasts(ts_entry, forecast_entry, no):
+    plot_length = 180
+    prediction_intervals = (50.0, 90.0)
+    legend = ["observations", "median prediction"] + [f"{k}% prediction interval" for k in prediction_intervals][::-1]
+
+    fig, ax = plt.subplots(1, 1, figsize=(10, 7))
+    ts_entry[-plot_length:].plot(ax=ax)  # plot the time series
+    forecast_entry.plot(prediction_intervals=prediction_intervals, color='g')
+    plt.grid(which="both")
+    plt.legend(legend, loc="upper left")
+    plt.savefig('pic/tf_result/result_output_tf_{}.png'.format(no))
+    plt.close(fig)

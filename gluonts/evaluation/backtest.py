@@ -85,7 +85,7 @@ def make_evaluation_predictions(
         assert (
             target.shape[-1] >= prediction_length
         )  # handles multivariate case (target_dim, history_length)
-        data["target"] = target[..., :-prediction_length]
+        data["target"] = target[..., :-prediction_length] #对target序列进行裁剪为排除预测域
         return data
 
     # TODO filter out time series with target shorter than prediction length

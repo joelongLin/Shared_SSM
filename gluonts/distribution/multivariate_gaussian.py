@@ -130,11 +130,11 @@ class MultivariateGaussian(Distribution):
                 mu=self.F.zeros_like(mu),
                 sigma=self.F.ones_like(mu),
                 dtype=self.float_type,
-            ).expand_dims(axis=-1)
+            ).expand_dims(axis=-1) #(num_sample, latent_dim, latent_dim, 1)
             samples = (
                 self.F.linalg_gemm2(L, samples_std_normal).squeeze(axis=-1)
                 + mu
-            )
+            ) #(num_sample, latent_dim, latent_dim)
             return samples
 
         return _sample_multiple(

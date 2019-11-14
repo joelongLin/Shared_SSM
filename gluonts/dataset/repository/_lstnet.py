@@ -79,7 +79,7 @@ datasets_info = {
     "electricity": LstnetDataset(
         name="electricity",
         # url=root + "electricity/electricity.txt.gz",
-        url = '../../../../dataset/electricity.txt.gz',
+        url = '../../../../dataset/electricity.txt.gz', # 放在我电脑上的相对路径
         # original dataset can be found at https://archive.ics.uci.edu/ml/datasets/ElectricityLoadDiagrams20112014#
         # the aggregated ones that is used from LSTNet filters out from the initial 370 series the one with no data
         # in 2011
