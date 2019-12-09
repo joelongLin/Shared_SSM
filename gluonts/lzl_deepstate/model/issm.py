@@ -109,7 +109,7 @@ class LevelISSM(ISSM):
             tf.expand_dims(
                 tf.expand_dims(
                     tf.eye(self.latent_dim()),axis=0), axis=0)
-        )
+        )#(1,1,lat,lat)
 
 
         # get the right shape: (batch_size, seq_length, latent_dim, latent_dim)
@@ -294,9 +294,6 @@ class CompositeISSM(ISSM):
             self.nonseasonal_issm.get_issm_coeff(seasonal_indicators),
             *[
                 issm.get_issm_coeff(
-                    # seasonal_indicators.slice_axis(
-                    #     axis=-1, begin=ix, end=ix + 1
-                    # )
                     tf.slice(seasonal_indicators ,begin=[0]*(len(seasonal_indicators.shape)-1)+[ix]
                              ,size=[-1]*(len(seasonal_indicators.shape)-1)+[1]
                              )

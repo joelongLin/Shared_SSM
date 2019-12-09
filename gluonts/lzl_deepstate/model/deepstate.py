@@ -227,8 +227,8 @@ class DeepStateNetwork(object):
 
 
         noise_std, innovation, residuals = self.lds_proj.build_forward(output)
-        # noise_std（bs , seq_length , output_dim ）
-        # innovation(bs, seq_length,  output_dim )
+        # noise_std（bs , seq_length , 1 ）
+        # innovation(bs, seq_length,  1 )
         # residuals(bs ,seq_length ,output_dim)
 
 
@@ -283,13 +283,11 @@ class DeepStateNetwork(object):
         )#(bs,seq_length)
 
 
-        self.train_result =  weighted_average(
+        self.train_result = weighted_average(
             x=-ll, axis=1, weights= tf.math.reduce_min(observed_context, axis=-1)
         )#(bs,)
 
         self.train_result_mean = tf.math.reduce_mean(self.train_result)
-        # self.train_op = tf.train.AdamOptimizer(self.config.learning_rate)\
-        #     .minimize(self.train_result_mean)
         optimizer = tf.train.AdamOptimizer(learning_rate=self.config.learning_rate)
         gvs = optimizer.compute_gradients(self.train_result_mean)
         capped_gvs = [(tf.clip_by_value(grad, -1., 10.), var) for grad, var in gvs]
@@ -511,7 +509,7 @@ class DeepStateNetwork(object):
         if forecast is None:
             forecast = self.all_forecast_result
 
-        for i in range(321):
+        for i in range(321):#对于electricity来说，总共由321列
             plot_prob_forecasts(ground_truth[i] , forecast[i] ,i)
 
         evaluator = Evaluator(quantiles=[0.1, 0.5, 0.9])

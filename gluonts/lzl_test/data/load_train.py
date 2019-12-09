@@ -15,6 +15,7 @@ from gluonts.model.deepstate import DeepStateEstimator
 from gluonts.trainer import Trainer
 from gluonts.evaluation.backtest import make_evaluation_predictions
 
+#判断 当前input　是否在all列表中，判断标准是第dim维度
 def whetherInputInList(input , all , dim):
     if len(all) == 0:
         return False
@@ -30,6 +31,7 @@ if ('/lzl_test' not in os.getcwd()):
 dataset_name = "electricity"
 elec_ds = get_dataset(dataset_name, regenerate=False)
 
+#注意 这里的num_periods_to_train  表示 训练窗口与预测窗口的倍数关系
 estimator = DeepStateEstimator(
         freq = elec_ds.metadata.freq,
         prediction_length = elec_ds.metadata.prediction_length*7,

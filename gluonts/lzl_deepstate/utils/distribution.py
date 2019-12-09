@@ -157,7 +157,6 @@ class MultivariateGaussian(object):
                         scale=tf.ones_like(mu),
                     )
                 ).sample(), axis=-1)#(num_sample, latent_dim, latent_dim, 1)
-
             samples = (
                 tf.squeeze(
                     tf.linalg.matmul(L, samples_std_normal),
@@ -251,9 +250,9 @@ class Gaussian(object):
         for _ in range(self.all_dim):
             level = level.expand_dims(axis=-1)
 
-        return F.broadcast_add(
+        return tf.math.broadcast_add(
             self.mu,
-            F.broadcast_mul(
+            tf.math.multiply(
                 self.sigma, math.sqrt(2.0) * erfinv(F, 2.0 * level - 1.0)
             ),
         )

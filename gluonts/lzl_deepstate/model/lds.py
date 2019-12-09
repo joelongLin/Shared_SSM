@@ -89,15 +89,18 @@ class LDS(object):
         self.output_dim = output_dim
         self.seq_length = seq_length
 
-        self.emission_coeff= tf.transpose(emission_coeff , [1,0,2,3])
+        self.emission_coeff= tf.transpose(emission_coeff , [1,0,2,3])#(336, 32, 1, 32)
 
-        self.innovation_coeff = tf.expand_dims(tf.transpose(innovation_coeff , [1,0,2]),axis=2)
+        self.innovation_coeff = tf.expand_dims(
+            tf.transpose(innovation_coeff , [1,0,2])
+            ,axis=2
+        )#(336, 32, 1, 32)
 
-        self.transition_coeff = tf.transpose(transition_coeff , [1,0,2,3])
+        self.transition_coeff = tf.transpose(transition_coeff , [1,0,2,3])#(336, 32, 32, 32)
 
-        self.noise_std = tf.transpose(noise_std , [1,0,2])
+        self.noise_std = tf.transpose(noise_std , [1,0,2])#(336, 32, 1)
 
-        self.residuals = tf.transpose(residuals, [1, 0, 2])
+        self.residuals = tf.transpose(residuals, [1, 0, 2])#(336, 32, 1)
 
         self.prior_mean = prior_mean
         self.prior_cov = prior_cov
@@ -287,7 +290,7 @@ class LDS(object):
         noise_std = tf.expand_dims(
             tf.transpose(self.noise_std , [1,0,2])
             ,axis=-1
-        ) #(bs,pred_len , obs_dim ,obs_dim)
+        ) #(bs,pred_len , obs_dim ,1)
 
         # samples_eps_obs[t]: (num_samples, batch_size, obs_dim, 1)
         samples_eps_obs = (
@@ -295,7 +298,7 @@ class LDS(object):
                 Gaussian(tf.zeros_like(noise_std), noise_std).sample(num_samples),
                 [2,0,1,3,4]
             )
-        ) #(pred_len, num_sample, bs, obs_dim, obs_dim)
+        ) #(pred_len, num_sample, bs, obs_dim, 1)
 
 
         # Sample standard normal for all time steps
@@ -326,7 +329,7 @@ class LDS(object):
         samples_lat_state = tf.expand_dims(
             state.sample(num_samples)
             ,axis=-1
-        )
+        )#(num_sample, bs, 6latent_dim,1)
         t=0
         samples_seq = tf.TensorArray(size=self.seq_length , dtype=tf.float32)
 
@@ -347,7 +350,7 @@ class LDS(object):
                     self.transition_coeff[t],
                     self.innovation_coeff[t],
                 ]
-            ]  # (num_sample, bs, obs, latent) (num_sample, bs, latent, latent) (num_sample, bs, obs, latent)
+            ]  # (num_sample, bs, obs, latent) (num_sample, bs, latent, latent) (num_sample, bs, 1, latent)
 
             # Expand residuals as well
             # residual_t: (num_samples, batch_size, obs_dim, 1)
@@ -376,12 +379,14 @@ class LDS(object):
 
             samples_seq = samples_seq.write(t ,samples_t)
 
+
+
             # sample next state: (num_samples, batch_size, latent_dim, 1)
             samples_lat_state = tf.linalg.matmul(
-                transition_coeff_t, samples_lat_state
+                transition_coeff_t, samples_lat_state #(samples,bs,lat,lat)×(samples, bs, lat,1 )
             ) + tf.linalg.matmul(
                 innovation_coeff_t, samples_std_normal[t], transpose_a=True
-            )
+            ) #(samples, bs, lat_dim,1 )×(samples, bs, obs_dim, 1) ->(samples,bs,lat,1)
 
             return t+1,samples_lat_state,samples_seq
 
@@ -424,9 +429,8 @@ class LDS(object):
         Tensor
             Samples, shape (num_samples, batch_size, seq_length, output_dim)
         """
-        F = self.F
 
-        state_mean = self.prior_mean.expand_dims(axis=-1)
+        state_mean = tf.expand_dims(self.prior_mean,axis=-1)
         state_cov = self.prior_cov
 
         output_mean_seq = []
@@ -434,41 +438,41 @@ class LDS(object):
 
         for t in range(self.seq_length):
             # compute and store observation mean at time t
-            output_mean = F.linalg_gemm2(
+            output_mean = tf.linalg.matmul(
                 self.emission_coeff[t], state_mean
             ) + self.residuals[t].expand_dims(axis=-1)
 
             output_mean_seq.append(output_mean)
 
             # compute and store observation cov at time t
-            output_cov = F.linalg_gemm2(
+            output_cov = tf.linalg.matmul(
                 self.emission_coeff[t],
-                F.linalg_gemm2(
+                tf.linalg.matmul(
                     state_cov, self.emission_coeff[t], transpose_b=True
                 ),
             ) + make_nd_diag(
-                F=F, x=self.noise_std[t] * self.noise_std[t], d=self.output_dim
+                x=self.noise_std[t] * self.noise_std[t], d=self.output_dim
             )
 
-            output_cov_seq.append(output_cov.expand_dims(axis=1))
+            output_cov_seq.append(tf.expand_dims(output_cov,axis=1))
 
-            state_mean = F.linalg_gemm2(self.transition_coeff[t], state_mean)
+            state_mean = tf.linalg.matmul(self.transition_coeff[t], state_mean)
 
-            state_cov = F.linalg_gemm2(
+            state_cov = tf.linalg.matmul(
                 self.transition_coeff[t],
-                F.linalg_gemm2(
+                tf.linalg.matmul(
                     state_cov, self.transition_coeff[t], transpose_b=True
                 ),
-            ) + F.linalg_gemm2(
+            ) + tf.linalg.matmul(
                 self.innovation_coeff[t],
                 self.innovation_coeff[t],
                 transpose_a=True,
             )
 
-        output_mean = F.concat(*output_mean_seq, dim=1)
-        output_cov = F.concat(*output_cov_seq, dim=1)
+        output_mean = tf.concat(output_mean_seq, axis=1)
+        output_cov = tf.concat(output_cov_seq, axis=1)
 
-        L = F.linalg_potrf(output_cov)
+        L = tf.linalg.cholesky(output_cov)
 
         output_distribution = MultivariateGaussian(output_mean, L)
 
@@ -477,7 +481,7 @@ class LDS(object):
         return (
             samples
             if scale is None
-            else F.broadcast_mul(samples, scale.expand_dims(axis=1))
+            else tf.math.multiply(samples, tf.expand_dims(scale,axis=1))
         )
 
 

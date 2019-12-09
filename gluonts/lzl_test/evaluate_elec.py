@@ -14,11 +14,11 @@ if ('/lzl_test' not in os.getcwd()):
 dataset_name = "electricity"
 elec_ds = get_dataset(dataset_name, regenerate=False)
 
-forecasts_path = 'data/predict_result/forecasts_electricity_{}_{}.pkl'.format(
+forecasts_path = 'tmp/predict_result/forecasts_electricity_{}_{}.pkl'.format(
                 336
                 ,168
             )
-tss_path = 'data/predict_result/tss_electricity_{}_{}.pkl'.format(
+tss_path = 'tmp/predict_result/tss_electricity_{}_{}.pkl'.format(
                 336
                 ,168
             )
@@ -42,8 +42,8 @@ if __name__ == '__main__':
     with open(tss_path, 'rb') as fp:
         tss_list = pickle.load(fp)
 
-    for i in tqdm(range(321)):
-        plot_prob_forecasts(tss_list[i], forecast_list[i] ,i)
+    # for i in tqdm(range(321)):
+    #     plot_prob_forecasts(tss_list[i], forecast_list[i] ,i)
 
     evaluator = Evaluator(quantiles=[0.1, 0.5, 0.9])
     agg_metrics, item_metrics = evaluator(iter(tss_list), iter(forecast_list), num_series=len(elec_ds.test))

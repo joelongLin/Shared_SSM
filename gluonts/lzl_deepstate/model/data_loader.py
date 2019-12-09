@@ -15,7 +15,7 @@ class GroundTruthLoader(object):
         for data_entry in data_iterator:
             data = data_entry.copy()
             index = pd.date_range(
-                start=data["start"],
+                    start=data["start"],
                 freq=self.config.freq,
                 periods=data["target"].shape[-1],
             )

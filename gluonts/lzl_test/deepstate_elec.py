@@ -54,8 +54,7 @@ elec_ds = get_dataset(dataset_name, regenerate=False)
 from gluonts.model.predictor import Predictor
 predictor_deserialized = Predictor.deserialize(Path("predictor/electricity_336_168"))
 print(predictor_deserialized.input_names)
-exit()
-predictor_deserialized.batch_size = 1
+# predictor_deserialized.batch_size = 1
 
 forecast_it, ts_it = make_evaluation_predictions(
     dataset=elec_ds.test,  # test dataset
@@ -67,11 +66,11 @@ forecast_it, ts_it = make_evaluation_predictions(
 forecasts = list(forecast_it) #(sample_size , mc_sample_size , prediction_len)
 tss = list(ts_it)
 
-forecasts_path = 'data/predict_result/forecasts_electricity_{}_{}.pkl'.format(
+forecasts_path = 'tmp/predict_result/forecasts_electricity_{}_{}.pkl'.format(
                 predictor_deserialized.prediction_net.past_length
                 ,predictor_deserialized.prediction_length
             )
-tss_path = 'data/predict_result/tss_electricity_{}_{}.pkl'.format(
+tss_path = 'tmp/predict_result/tss_electricity_{}_{}.pkl'.format(
                 predictor_deserialized.prediction_net.past_length
                 ,predictor_deserialized.prediction_length
             )

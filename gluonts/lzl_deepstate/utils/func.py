@@ -136,6 +136,52 @@ def erf(x):
     )
     return tf.where(tf.math.greater_equal(x, zeros), res, -1.0 * res)
 
+def erfinv(x: Tensor) -> Tensor:
+    zeros = tf.zeros_like(x)
+
+    w = -tf.log(tf.math.multiply((1.0 - x), (1.0 + x)))
+    mask_lesser = tf.math.less(w, zeros + 5.0)
+
+    w = tf.where(mask_lesser, w - 2.5, tf.math.sqrt(w) - 3.0)
+
+    coefficients_lesser = [
+        2.81022636e-08,
+        3.43273939e-07,
+        -3.5233877e-06,
+        -4.39150654e-06,
+        0.00021858087,
+        -0.00125372503,
+        -0.00417768164,
+        0.246640727,
+        1.50140941,
+    ]
+
+    coefficients_greater_equal = [
+        -0.000200214257,
+        0.000100950558,
+        0.00134934322,
+        -0.00367342844,
+        0.00573950773,
+        -0.0076224613,
+        0.00943887047,
+        1.00167406,
+        2.83297682,
+    ]
+
+    p = F.where(
+        mask_lesser,
+        coefficients_lesser[0] + zeros,
+        coefficients_greater_equal[0] + zeros,
+    )
+
+    for c_l, c_ge in zip(
+        coefficients_lesser[1:], coefficients_greater_equal[1:]
+    ):
+        c = tf.where(mask_lesser, c_l + zeros, c_ge + zeros)
+        p = c + tf.math.multiply(p, w)
+
+    return tf.math.multiply(p, x)
+
 # 产生适用于 tensorflow 的shape list
 def mxnet_slice(tensor : Tensor, axis:int, begin:int, end:int):
     begin_list = [0]*len(tensor.shape) ; begin_list[axis] = begin
