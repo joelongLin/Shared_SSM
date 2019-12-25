@@ -3,12 +3,20 @@ import pandas as pd
 import random
 from typing import Dict, Iterator, NamedTuple, Optional, Tuple, Union,Any
 DataEntry = Dict[str, Any]
+import pickle
 from gluonts.dataset.repository.datasets import get_dataset
 
 class GroundTruthLoader(object):
     def __init__(self, config):
         self.config = config
-        self.ds = get_dataset(config.dataset, regenerate=False)
+        try:
+            self.ds = get_dataset(config.dataset, regenerate=False)
+        except:
+            print('导入的 ground truth 来自于外部')
+            with open('data/groundtruth_{}_{}_{}.pkl'.format(
+            config.dataset, config.past_length, config.prediction_length,
+            ), 'rb') as fp:
+                self.ds = pickle.load(fp)
 
     def add_ts_dataframe(self,data_iterator: Iterator[DataEntry]):
         ts_df = []

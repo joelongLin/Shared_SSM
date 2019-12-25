@@ -5,6 +5,7 @@ from gluonts.dataset.util import to_pandas
 from gluonts.dataset.loader import TrainDataLoader
 from gluonts.gluonts_tqdm import tqdm
 from gluonts.support.util import get_hybrid_forward_input_names
+from data_utils import whetherInputInList
 from pathlib import Path
 import pickle
 import os
@@ -15,15 +16,8 @@ from gluonts.model.deepstate import DeepStateEstimator
 from gluonts.trainer import Trainer
 from gluonts.evaluation.backtest import make_evaluation_predictions
 
-#判断 当前input　是否在all列表中，判断标准是第dim维度
-def whetherInputInList(input , all , dim):
-    if len(all) == 0:
-        return False
-    for value in all:
-        if (value[dim] == input[dim]).all():
-            return True
 
-    return False
+
 
 if ('/lzl_test' not in os.getcwd()):
      os.chdir('gluonts/lzl_test')

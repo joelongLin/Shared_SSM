@@ -213,7 +213,7 @@ class Forecast:
             ptile = percentiles_sorted[i]
             alpha = alpha_for_percentile(ptile)
             plt.fill_between(
-                self.index,
+                self.index.dt.to_pydatetime(),
                 ps_data[i],
                 ps_data[-i - 1],
                 facecolor=color,

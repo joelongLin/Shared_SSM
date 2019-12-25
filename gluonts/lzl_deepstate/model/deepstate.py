@@ -8,6 +8,7 @@ import os
 from .issm import CompositeISSM
 from ..utils import make_nd_diag,weighted_average
 from tensorflow import Tensor
+from sklearn.metrics import accuracy_score
 from .lds import LDSArgsProj ,LDS
 from .scaler import MeanScaler,NOPScaler
 from .data_loader import DataLoader,GroundTruthLoader
@@ -340,8 +341,6 @@ class DeepStateNetwork(object):
             prior_cov=final_cov,
         )
 
-
-
         samples = lds_prediction.sample(
             num_samples=self.num_sample_paths, scale=scale
         )# (num_samples, batch_size, seq_length, obs_dim)
@@ -376,8 +375,17 @@ class DeepStateNetwork(object):
         sess = self.sess
         writer_path =os.path.join( self.config.logs_dir ,
                    '_'.join(time.asctime(time.localtime(time.time())).split(' ')[1:5]))
-
         writer = tf.summary.FileWriter(writer_path, sess.graph)
+
+        #将当前训练的参数输入到路径中
+        hyperparameter_json_path = os.path.join(writer_path, "hyperparameter.json")
+        config_dict = {}
+        for k in self.config:
+            v = self.config[k].value
+            config_dict[k] = v
+        with open(hyperparameter_json_path, 'w') as f:
+            json.dump(config_dict, f, indent=4)
+
         num_batches = self.config.num_batches_per_epoch
         best_epoch_info = {
             'epoch_no': -1,
@@ -393,7 +401,6 @@ class DeepStateNetwork(object):
             #产生新的数据集
             tic = time.time()
             epoch_loss = 0.0
-
 
             with tqdm(range(num_batches)) as it:
                 for batch_no in it :
@@ -468,8 +475,10 @@ class DeepStateNetwork(object):
                 print('something bad appears')
             finally:
                 print('whatever ! life is still fantastic !')
-
-        for batch_no in range(len(self.test_data)//self.batch_size+1):
+        iteration = len(self.test_data)//self.batch_size+1 \
+                    if len(self.test_data)%self.batch_size!=0 \
+                    else len(self.test_data)//self.batch_size
+        for batch_no in range(iteration):
             test_input , other_info = next(self.test_iter)
             placeholders = [self.feat_static_cat, self.past_observed_values
                 , self.past_seasonal_indicators, self.past_time_feat, self.past_target
@@ -500,7 +509,7 @@ class DeepStateNetwork(object):
                     break
 
 
-        return self.all_forecast_result
+        return self
 
 
     def evaluate(self, forecast=None):
@@ -508,21 +517,22 @@ class DeepStateNetwork(object):
         ground_truth = ground_truth_loader.get_ground_truth()
         if forecast is None:
             forecast = self.all_forecast_result
-
-        for i in range(321):#对于electricity来说，总共由321列
-            plot_prob_forecasts(ground_truth[i] , forecast[i] ,i)
-
-        evaluator = Evaluator(quantiles=[0.1, 0.5, 0.9])
-        agg_metrics, item_metrics = evaluator(iter(ground_truth)
-                                              , iter(forecast)
-                                              , num_series=len(ground_truth_loader.ds.test))
-
-        print(json.dumps(agg_metrics, indent=4))
+        evaluate_up_down(ground_truth ,forecast)
+        # plot_length = self.config.past_length + self.config.prediction_length
+        # for i in range(992):#对于electricity来说，总共由321列
+        #     plot_prob_forecasts(ground_truth[i] , forecast[i] ,self.config.dataset,i,plot_length)
+        #
+        # exit()
+        # evaluator = Evaluator(quantiles=[0.1, 0.5, 0.9])
+        # agg_metrics, item_metrics = evaluator(iter(ground_truth)
+        #                                       , iter(forecast)
+        #                                       , num_series=len(ground_truth_loader.ds.test))
+        #
+        # print(json.dumps(agg_metrics, indent=4))
         pass
 
 
-def plot_prob_forecasts(ts_entry, forecast_entry, no):
-    plot_length = 180
+def plot_prob_forecasts(ts_entry, forecast_entry,ds_name ,no ,plot_length):
     prediction_intervals = (50.0, 90.0)
     legend = ["observations", "median prediction"] + [f"{k}% prediction interval" for k in prediction_intervals][::-1]
 
@@ -531,5 +541,13 @@ def plot_prob_forecasts(ts_entry, forecast_entry, no):
     forecast_entry.plot(prediction_intervals=prediction_intervals, color='g')
     plt.grid(which="both")
     plt.legend(legend, loc="upper left")
-    plt.savefig('pic/tf_result/result_output_tf_{}.png'.format(no))
+    plt.savefig('pic/{}_result/result_output_tf_{}.png'.format(ds_name,no))
     plt.close(fig)
+
+def evaluate_up_down(ground_truth , mc_forecast):
+    # 0代表跌 1代表涨
+    ground_truth_labels = [1 if truth.iloc[-1].values[0] > truth.iloc[-2].values[0] else 0 for truth in ground_truth]
+    forecast_labels = [1 if mc_forecast[i].mean[0] > ground_truth[i].iloc[-2].values[0] else 0
+                       for i in range(len(mc_forecast))]
+    acc = accuracy_score(ground_truth_labels , forecast_labels)
+    print(acc)
