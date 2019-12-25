@@ -1,4 +1,4 @@
-from .config import (reload_config,get_image_config)
+from .config import (reload_config)
 from .func import (
     weighted_average
     ,make_nd_diag
@@ -12,7 +12,6 @@ from .func import (
 from .distribution import MultivariateGaussian, Gaussian
 __all__ = [
     "reload_config",
-    "get_image_config",
     "weighted_average",
     "make_nd_diag",
     "batch_diagonal",

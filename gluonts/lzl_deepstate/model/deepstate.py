@@ -16,6 +16,7 @@ from tqdm import tqdm
 from .forecast import SampleForecast
 from .evaluation import Evaluator
 import json
+from ..utils import reload_config
 import matplotlib.pyplot as plt
 from ...time_feature import (TimeFeature ,time_features_from_frequency_str)
 
@@ -366,23 +367,27 @@ class DeepStateNetwork(object):
         # Initialize or reload variables
         if self.config.reload_model is not '':
             print("Restoring model in %s" % self.config.reload_model)
-            self.saver.restore(self.sess, self.config.reload_model)
+            params_path = os.path.join(self.config.reload_model , "model_params")
+            param_name = os.listdir(params_path)[0].split('.')[0]
+            params_path = os.path.join(params_path, param_name)
+            self.saver.restore(self.sess, params_path)
         else:
+            print("Training to get new model params")
             self.sess.run(tf.global_variables_initializer())
         return self
 
     def train(self):
+        #如果导入已经有的信息,不进行训练
+        if self.config.reload_model != '':
+            return
         sess = self.sess
-        writer_path =os.path.join( self.config.logs_dir ,
+        self.writer_path =os.path.join( self.config.logs_dir ,
                    '_'.join(time.asctime(time.localtime(time.time())).split(' ')[1:5]))
-        writer = tf.summary.FileWriter(writer_path, sess.graph)
+        writer = tf.summary.FileWriter(self.writer_path, sess.graph)
 
         #将当前训练的参数输入到路径中
-        hyperparameter_json_path = os.path.join(writer_path, "hyperparameter.json")
-        config_dict = {}
-        for k in self.config:
-            v = self.config[k].value
-            config_dict[k] = v
+        hyperparameter_json_path = os.path.join(self.writer_path, "hyperparameter.json")
+        config_dict = {k:self.config[k].value for k in self.config}
         with open(hyperparameter_json_path, 'w') as f:
             json.dump(config_dict, f, indent=4)
 
@@ -443,7 +448,7 @@ class DeepStateNetwork(object):
             if avg_epoch_loss < best_epoch_info['metric_value']:
                 best_epoch_info['metric_value'] = avg_epoch_loss
                 best_epoch_info['epoch_no'] = epoch_no
-                self.save_path = os.path.join(writer_path , "model_params"
+                self.save_path = os.path.join(self.writer_path , "model_params"
                                  ,'best_{}_{}_{}'.format(self.dataset, self.past_length,self.prediction_length)
                             )
                 self.saver.save(sess, self.save_path)
@@ -517,7 +522,13 @@ class DeepStateNetwork(object):
         ground_truth = ground_truth_loader.get_ground_truth()
         if forecast is None:
             forecast = self.all_forecast_result
-        evaluate_up_down(ground_truth ,forecast)
+        finance_eval = evaluate_up_down(ground_truth ,forecast)
+        if hasattr(self , 'writer_path'):
+            eval_path = os.path.join(self.writer_path, "metrics.json")
+        else:
+            eval_path = os.path.join(self.config.reload_model , "metrics.json")
+        with open(eval_path, 'w') as f:
+            json.dump(finance_eval, f, indent=4)
         # plot_length = self.config.past_length + self.config.prediction_length
         # for i in range(321):#对于electricity来说，总共由321列
         #     plot_prob_forecasts(ground_truth[i] , forecast[i] ,self.config.dataset,i,plot_length)
@@ -550,4 +561,4 @@ def evaluate_up_down(ground_truth , mc_forecast):
     forecast_labels = [1 if mc_forecast[i].mean[0] > ground_truth[i].iloc[-2].values[0] else 0
                        for i in range(len(mc_forecast))]
     acc = accuracy_score(ground_truth_labels , forecast_labels)
-    print(acc)
+    return {'acc' : acc}

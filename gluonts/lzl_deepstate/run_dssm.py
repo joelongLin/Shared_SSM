@@ -3,16 +3,16 @@
 
 from gluonts.lzl_deepstate.model.deepstate import DeepStateNetwork
 import pickle
-from gluonts.lzl_deepstate.utils.config import get_image_config , reload_config
+from gluonts.lzl_deepstate.utils.config import  reload_config
 import tensorflow as tf
 tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 import os
 os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
 cl = tf.app.flags
-# relod_model =  'logs/btc_eth/Dec_24_14:19:07_2019/model_params/best_btc_eth_30_1'
-relod_model = ''
-cl.DEFINE_string('reload_model' ,relod_model,'model to reload')
+reload_model =  'logs/btc_eth/Dec_25_17:27:07_2019'
+# relod_model = ''
+cl.DEFINE_string('reload_model' ,reload_model,'model to reload')
 cl.DEFINE_string('logs_dir','logs/btc_eth','file to print log')
 
 # network configuration
@@ -27,7 +27,7 @@ cl.DEFINE_string('dataset' , 'btc_eth' , 'Name of the target dataset')
 cl.DEFINE_string('freq','1D','Frequency of the data to train on and predict')
 cl.DEFINE_integer('past_length' ,30,'This is the length of the training time series')
 cl.DEFINE_integer('prediction_length' , 1 , 'Length of the prediction horizon')
-cl.DEFINE_bool('add_trend' , True , 'Flag to indicate whether to include trend component in the SSM')
+cl.DEFINE_bool('add_trend' , False , 'Flag to indicate whether to include trend component in the SSM')
 
 # prediciton configuration
 cl.DEFINE_integer('num_eval_samples', '100', 'Number of samples paths to draw when computing predictions')
@@ -43,13 +43,14 @@ cl.DEFINE_integer('batch_size' ,  32 , 'Numbere of examples in each batch')
 cl.DEFINE_integer('num_batches_per_epoch' , 50 , 'Numbers of batches at each epoch')
 cl.DEFINE_float('learning_rate' , 0.001 , 'Initial learning rate')
 
-config = cl.FLAGS
 
 def main(_):
     if ('/lzl_deepstate' not in os.getcwd()):
          os.chdir('gluonts/lzl_deepstate')
          print('change os dir : ',os.getcwd())
-
+    config = cl.FLAGS
+    print('reload model : ' , config.reload_model)
+    config = reload_config(config)
     configuration = tf.compat.v1.ConfigProto()
     configuration.gpu_options.allow_growth = True
     with tf.compat.v1.Session(config=configuration) as sess:

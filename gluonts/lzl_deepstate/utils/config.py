@@ -1,61 +1,19 @@
+# -*-coding:utf-8-*-
 import tensorflow as tf
 import time
 import os
 import json
-# -*-coding:utf-8-*-
-
-
 
 def reload_config(FLAGS):
+    # If we are reloading a model, overwrite the flags
+    if FLAGS.reload_model is not '':
+        with open(os.path.join(FLAGS.reload_model, 'hyperparameter.json')) as data_file:
+            config_dict = json.load(data_file)
+            #必须加进去，否则会丢失 reload_model
+            config_dict['reload_model'] =  FLAGS.reload_model
+        for key, value in config_dict.items():
+            attr_remove = ['gpu', 'run_name', 'logs_dir', 'n_steps_gen', 'display_step', 'generate_step']
+            # attr_remove = ['gpu', 'n_steps_gen', 'reload_model', 'display_step', 'generate_step']
+            if key not in attr_remove:
+                FLAGS.__setattr__(key, value)
     return FLAGS
-
-
-def get_image_config():
-    cl = tf.app.flags
-    # relod_model =  'logs/btc_eth/Dec_24_14:19:07_2019/model_params/best_btc_eth_30_1'
-    relod_model = ''
-    cl.DEFINE_string('reload_model' ,relod_model,'model to reload')
-    cl.DEFINE_string('logs_dir','logs/btc_eth','file to print log')
-
-    # network configuration
-    cl.DEFINE_integer('num_layers' ,2,'num of lstm cell layers')
-    cl.DEFINE_integer('num_cells' ,40 , 'hidden units size of lstm cell')
-    cl.DEFINE_string('cell_type' , 'lstm' , 'Type of recurrent cells to use (available: "lstm" or "gru"')
-    cl.DEFINE_float('dropout_rate' , 0.1 , 'Dropout regularization parameter (default: 0.1)')
-    cl.DEFINE_string('embedding_dimension' , '' , ' Dimension of the embeddings for categorical features')
-
-    # dataset configuration
-    cl.DEFINE_string('dataset' , 'btc_eth' , 'Name of the target dataset')
-    cl.DEFINE_string('freq','1D','Frequency of the data to train on and predict')
-    cl.DEFINE_integer('past_length' ,30,'This is the length of the training time series')
-    cl.DEFINE_integer('prediction_length' , 1 , 'Length of the prediction horizon')
-    cl.DEFINE_bool('add_trend' , False , 'Flag to indicate whether to include trend component in the SSM')
-
-    # prediciton configuration
-    cl.DEFINE_integer('num_eval_samples', '100', 'Number of samples paths to draw when computing predictions')
-    cl.DEFINE_bool('scaling', True, 'whether to scale the target and observed')
-    cl.DEFINE_bool('use_feat_dynamic_real', False, 'Whether to use the ``feat_dynamic_real`` field from the data')
-    cl.DEFINE_bool('use_feat_static_cat', True, 'Whether to use the ``feat_static_cat`` field from the data')
-    cl.DEFINE_string('cardinality' , '2' , 'Number of values of each categorical feature.')
-
-    #train configuration
-    cl.DEFINE_integer('epochs' , 25 , 'Number of epochs that the network will train (default: 1).')
-    cl.DEFINE_bool('shuffle' , False ,'whether to shuffle the train dataset')
-    cl.DEFINE_integer('batch_size' ,  32 , 'Numbere of examples in each batch')
-    cl.DEFINE_integer('num_batches_per_epoch' , 50 , 'Numbers of batches at each epoch')
-    cl.DEFINE_float('learning_rate' , 0.001 , 'Initial learning rate')
-
-
-    return cl
-
-
-if __name__ == '__main__':
-    config = get_image_config()
-    config.DEFINE_bool('test', True, 'test')
-    config = reload_config(config.FLAGS) #本质 只有 config.FLAGS才是关键
-
-    print(config.dataset)
-    config.dataset = 'test'
-    print(config.dataset)
-
-    # print(config.__flags)
