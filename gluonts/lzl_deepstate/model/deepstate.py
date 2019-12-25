@@ -519,7 +519,7 @@ class DeepStateNetwork(object):
             forecast = self.all_forecast_result
         evaluate_up_down(ground_truth ,forecast)
         # plot_length = self.config.past_length + self.config.prediction_length
-        # for i in range(992):#对于electricity来说，总共由321列
+        # for i in range(321):#对于electricity来说，总共由321列
         #     plot_prob_forecasts(ground_truth[i] , forecast[i] ,self.config.dataset,i,plot_length)
         #
         # exit()
