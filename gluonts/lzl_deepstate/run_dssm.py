@@ -10,8 +10,8 @@ import os
 os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
 cl = tf.app.flags
-reload_model =  'logs/btc_eth/Dec_25_17:27:07_2019'
-# relod_model = ''
+# reload_model =  'logs/btc_eth/Dec_25_17:27:07_2019'
+reload_model = ''
 cl.DEFINE_string('reload_model' ,reload_model,'model to reload')
 cl.DEFINE_string('logs_dir','logs/btc_eth','file to print log')
 
