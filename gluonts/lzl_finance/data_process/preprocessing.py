@@ -13,8 +13,11 @@ from gluonts.lzl_deepstate.model.issm import CompositeISSM
 from gluonts.dataset.loader import  InferenceDataLoader
 from tqdm import tqdm
 import pickle
-
-root='/home/lzl/pycharm/gluon/gluonts/lzl_finance/data_process/raw_data/'
+import os
+if 'lzl_finance' not in os.getcwd():
+    print('处理数据的时候，请先进入finance的主目录')
+    exit(-1)
+root='data_process/raw_data/'
 class Dataset(NamedTuple):
     name: str
     url: list

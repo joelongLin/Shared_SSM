@@ -1,11 +1,6 @@
 import mxnet as mx
 import numpy as np
 from gluonts.dataset.repository.datasets import get_dataset, dataset_recipes
-from gluonts.dataset.util import to_pandas
-from gluonts.dataset.loader import TrainDataLoader
-from gluonts.gluonts_tqdm import tqdm
-from gluonts.support.util import get_hybrid_forward_input_names
-from pathlib import Path
 import pickle
 import os
 
@@ -20,8 +15,8 @@ from gluonts.dataset.loader import  InferenceDataLoader
 config = get_image_config()
 config = reload_config(config.FLAGS)
 
-if ('/lzl_test' not in os.getcwd()):
-     os.chdir('gluonts/lzl_test')
+if ('/lzl_data_from_gluonts' not in os.getcwd()):
+     os.chdir('gluonts/lzl_data_from_gluonts')
      print('change os dir : ',os.getcwd())
 dataset_name = "electricity"
 elec_ds = get_dataset(dataset_name, regenerate=False)

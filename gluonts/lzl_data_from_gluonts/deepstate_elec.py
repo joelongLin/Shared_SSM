@@ -15,8 +15,8 @@ from gluonts.model.deepstate import DeepStateEstimator
 from gluonts.trainer import Trainer
 from gluonts.evaluation.backtest import make_evaluation_predictions
 
-if ('/lzl_test' not in os.getcwd()):
-     os.chdir('gluonts/lzl_test')
+if ('/lzl_data_from_gluonts' not in os.getcwd()):
+     os.chdir('gluonts/lzl_data_from_gluonts')
      print('change os dir : ',os.getcwd())
 dataset_name = "electricity"
 elec_ds = get_dataset(dataset_name, regenerate=False)
