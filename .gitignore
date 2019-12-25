@@ -1,0 +1,8 @@
+.idea
+
+# some data file of the project
+gluonts/lzl_deepstate/logs
+gluonts/lzl_deepstate/data
+
+# logging Files #
+*.log
