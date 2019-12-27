@@ -25,9 +25,9 @@ cl.DEFINE_string('embedding_dimension' , '' , ' Dimension of the embeddings for 
 # dataset configuration
 cl.DEFINE_string('dataset' , 'btc_eth' , 'Name of the target dataset')
 cl.DEFINE_string('freq','1D','Frequency of the data to train on and predict')
-cl.DEFINE_integer('past_length' ,30,'This is the length of the training time series')
+cl.DEFINE_integer('past_length' ,7,'This is the length of the training time series')
 cl.DEFINE_integer('prediction_length' , 1 , 'Length of the prediction horizon')
-cl.DEFINE_bool('add_trend' , False , 'Flag to indicate whether to include trend component in the SSM')
+cl.DEFINE_bool('add_trend' , True , 'Flag to indicate whether to include trend component in the SSM')
 
 # prediciton configuration
 cl.DEFINE_integer('num_eval_samples', '100', 'Number of samples paths to draw when computing predictions')

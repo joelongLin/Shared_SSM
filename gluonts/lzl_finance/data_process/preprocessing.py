@@ -79,6 +79,7 @@ def slice_df_with_window(
     timestamp = dataframe.index
     target_slice,target_start, feat_static_cat ,label = [], [] ,[] ,[]
     _ , num_series = data.shape
+    # feat_static_cat 特征值，还是按照原序列进行标注
     for j in range(num_series):
         for i in range(window_size - 1, len(data)):
             feat_static_cat.append(j)

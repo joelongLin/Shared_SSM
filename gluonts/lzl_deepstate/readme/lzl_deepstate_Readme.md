@@ -28,7 +28,7 @@ gluonts         # 主要的项目文件，请务必包含这个一块使用，�
     lzl_deepstate   #模型主题复现的目录
     ├─run_dssm.py            # 需要运行的程序
     ├─utils
-    | ├─config.py     # 配置文件
+    | ├─config.py     # 一些简单的配置文件方法
     | ├─distribution.py  # 一些关于概率分布的方法，主要是高斯
     | └─func.py      # 一些比较奇怪mxnet api，用tf封装
     └─models
@@ -40,10 +40,10 @@ gluonts         # 主要的项目文件，请务必包含这个一块使用，�
       ├─scaler.py   # 对序列进行缩放，
       └─forecast.py   # 一些由AWSLAB提供的预测方法，在这里直接使用
       
-    lzl_test 	#对原代码中的一些代码块做一些测试，同时用于获取数据
+    lzl_data_from_gluonts 	#对原代码中的一些代码块做一些测试，同时用于获取数据
         ├─data
-        | ├─load_test.py     # 利用原来gluonts的模块，获取测试数据
-        | ├─load_train.py  # 利用原来的gluonts模块，获取训练数据
+        | ├─load_test.py     # 利用原来gluonts的模块，获取测试数据 ，数据放在lzl_deepstate/data
+        | ├─load_train.py  # 利用原来的gluonts模块，获取训练数据, 数据放在lzl_deepstate/data
         
 ```
 
@@ -52,8 +52,9 @@ gluonts         # 主要的项目文件，请务必包含这个一块使用，�
 Requirements before we start:
 
 * TensorFlow 1.14
+`pip install tensorflow-gpu=1.14`
 * gluonts （直接在GitHub上下来下来就可以了），或者直接用本工程文件
-
+`pip install gluonts`
 
 
 #### 数据预处理的代码
@@ -108,24 +109,27 @@ estimator = DeepStateEstimator(
 
 通过运行如下路径中的代码，就可以直接运行
 
- `gluonts/lzl_deepstate/run_dssm.py`:
+ `python gluonts/lzl_deepstate/run_dssm.py --[参数]=[赋值]`:
 
 ```
-config = get_image_config()  #获取配置文件
-config = reload_config(config.FLAGS)
+def main(_):
+    if ('/lzl_deepstate' not in os.getcwd()):
+         os.chdir('gluonts/lzl_deepstate')
+         print('change os dir : ',os.getcwd())
+    config = cl.FLAGS
+    print('reload model : ' , config.reload_model)
+    config = reload_config(config)
+    configuration = tf.compat.v1.ConfigProto()
+    configuration.gpu_options.allow_growth = True
+    with tf.compat.v1.Session(config=configuration) as sess:
+        dssm = DeepStateNetwork(config=config,sess=sess)\
+            .build_module().build_train_forward().build_predict_forward().initialize_variables()
+        dssm.train()
+        dssm.predict()
+        dssm.evaluate()
 
-if ('/lzl_deepstate' not in os.getcwd()):
-     os.chdir('gluonts/lzl_deepstate')
-     print('change os dir : ',os.getcwd())
-
-configuration = tf.compat.v1.ConfigProto()
-configuration.gpu_options.allow_growth = True
-with tf.compat.v1.Session(config=configuration) as sess:
-    dssm = DeepStateNetwork(config=config,sess=sess)\
-        .build_module().build_train_forward().build_predict_forward().initialize_variables()
-    dssm.train() #需要在config中设置reload_model 为空
-    dssm.predict() #也可以直接不训练，但是要在config中设置reload_model为你训练好的模型
-    dssm.evaluate() #进行评估以及 画图
+if __name__ == '__main__':
+   tf.app.run()
 ```
 
 
