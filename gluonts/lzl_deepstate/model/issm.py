@@ -29,9 +29,6 @@ from gluonts.time_feature import (
     MonthOfYear,
 )
 
-
-
-
 class ISSM:
     r"""
     An abstract class for providing the basic structure of Innovation State Space Model (ISSM).

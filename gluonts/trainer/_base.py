@@ -242,17 +242,17 @@ class Trainer:
                         for batch_no, data_entry in enumerate(it, start=1):
                             if self.halt:
                                 break
-                            # inputs = [data_entry[k] for k in input_names]
+                            inputs = [data_entry[k] for k in input_names]
 
-                            inputs = [np.squeeze(data_entry[k].asnumpy() , axis=0) for k in input_names]
-                            if not whetherInputInList(inputs , all_result ,-1):
-                                all_result.append(inputs)
-                                if batch_no % 1 == 0 :
-                                    print('当前第 ' ,batch_no , '正输入 all_data 中')
-                            else:
-                                print('输入结束了')
-                                break
-                            continue
+                            # inputs = [np.squeeze(data_entry[k].asnumpy() , axis=0) for k in input_names]
+                            # if not whetherInputInList(inputs , all_result ,-1):
+                            #     all_result.append(inputs)
+                            #     if batch_no % 1 == 0 :
+                            #         print('当前第 ' ,batch_no , '正输入 all_data 中')
+                            # else:
+                            #     print('输入结束了')
+                            #     break
+                            # continue
 
 
                             with mx.autograd.record():
@@ -289,10 +289,10 @@ class Trainer:
                                     f"Number of parameters in {net_name}: {num_model_param}"
                                 )
 
-                    with open('../lzl_deepstate/data/train_electricity_672_168.pkl', 'wb') as fp:
-                        pickle.dump(all_result, fp)
-                    print('已获取全部的数据')
-                    exit()
+                    # with open('../lzl_deepstate/data/train_electricity_672_168.pkl', 'wb') as fp:
+                    #     pickle.dump(all_result, fp)
+                    # print('已获取全部的数据')
+                    # exit()
 
                     # mark epoch end time and log time cost of current epoch
                     toc = time.time()

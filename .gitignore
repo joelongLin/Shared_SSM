@@ -3,6 +3,8 @@
 # some data file of the project
 gluonts/lzl_deepstate/logs/
 gluonts/lzl_deepstate/data/
+gluonts/lzl_data_from_gluonts/others/
+gluonts/lzl_data_from_gluonts/*.py
 
 # logging Files #
 *.log

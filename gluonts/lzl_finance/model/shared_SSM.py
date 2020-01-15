@@ -1,25 +1,17 @@
 import logging
 
 import tensorflow as tf
+from tensorflow import Tensor
 import numpy as np
 import pickle
 import time
 import os
-from .issm import CompositeISSM
-from ..utils import make_nd_diag,weighted_average
-from tensorflow import Tensor
-from sklearn.metrics import accuracy_score
-from .lds import LDSArgsProj ,LDS
-from .scaler import MeanScaler,NOPScaler
-from .data_loader import DataLoader,GroundTruthLoader
 from tqdm import tqdm
-from .forecast import SampleForecast
-from .evaluation import Evaluator
 import json
-from ..utils import reload_config
 import matplotlib.pyplot as plt
-from ...time_feature import (TimeFeature ,time_features_from_frequency_str)
+from gluonts.model.forecast import SampleForecast
 
+# 将当前序列所在的编号(相当于告诉你当前的序列信息)变成一个embedding向量
 class FeatureEmbedder(object):
     def __init__(self,cardinalities,embedding_dims):
         assert (
@@ -75,7 +67,7 @@ class FeatureEmbedder(object):
             axis=-1,
         )
 
-class DeepStateNetwork(object):
+class SharedSSM(object):
     def __init__(self, config , sess):
         self.config = config
         self.sess = sess
@@ -85,17 +77,20 @@ class DeepStateNetwork(object):
         self.freq = config.freq
         self.past_length = config.past_length
         self.prediction_length = config.prediction_length
-        self.add_trend = config.add_trend
 
-
-        # 放入数据集
+        # target 数据集
         with open('data/train_{}_{}_{}.pkl'.format(self.dataset , self.past_length,self.prediction_length) , 'rb') as fp:
             self.train_data = pickle.load(fp)
         with open('data/test_{}_{}_{}.pkl'.format(self.dataset , self.past_length,self.prediction_length) , 'rb') as fp:
             self.test_data = pickle.load(fp)
+
+        # covariate 数据集
+        # TODO: 这里需要在
         shape_list = []
         for input in self.train_data[0]:
             shape_list.append(input.shape)
+
+        # covariate 数据集
 
         # 将数据集放入 DataLoader 中产生一个 iterator
         self.train_iter =  DataLoader(self.train_data, self.config).data_iterator(is_train=True)
@@ -199,7 +194,7 @@ class DeepStateNetwork(object):
         # construct big features tensor (context)
         features = tf.concat([time_feat, repeated_static_features], axis=2)#(bs,seq_length , time_feat + embedding)
 
-        # output 相当于使用 lstm 产生 SSM 的参数, 且只是一部分的参数
+        # output 相当于使用 lstm 产生 SSM 的参数
         output , lstm_final_state = tf.nn.dynamic_rnn(
             cell = self.lstm,
             inputs = features,

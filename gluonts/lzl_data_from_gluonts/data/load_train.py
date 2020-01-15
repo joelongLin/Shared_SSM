@@ -5,7 +5,7 @@ from gluonts.dataset.util import to_pandas
 from gluonts.dataset.loader import TrainDataLoader
 from gluonts.gluonts_tqdm import tqdm
 from gluonts.support.util import get_hybrid_forward_input_names
-from data_utils import whetherInputInList
+from .data_utils import whetherInputInList
 from pathlib import Path
 import pickle
 import os

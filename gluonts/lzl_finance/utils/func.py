@@ -14,8 +14,11 @@ def _broadcast_param(param, axes, sizes):
         param_exp = tf.expand_dims(param,axis = axis)
         tile_times = [1]*len(param_exp.shape) ; tile_times[axis] = tile_times[axis]*size
         param = tf.tile(param_exp ,tile_times)
+        # new_shape = tf.TensorShape(new_shape)
+        # param = tf.broadcast_to(param_exp, new_shape )
     return param
 
+# used for the innovation SSM
 def _make_block_diagonal(blocks):
     assert (
         len(blocks) > 0
@@ -23,6 +26,7 @@ def _make_block_diagonal(blocks):
 
     if len(blocks) == 1:
         return blocks[0]
+
 
     # transition coefficient is block diagonal!
     block_diagonal = _make_2_block_diagonal(blocks[0], blocks[1])
@@ -33,7 +37,7 @@ def _make_block_diagonal(blocks):
 
     return block_diagonal
 
-
+# used for innovation SSM
 def _make_2_block_diagonal(left, right) :
     """
     Creates a block diagonal matrix of shape (batch_size, m+n, m+n) where m and n are the sizes of
@@ -41,6 +45,7 @@ def _make_2_block_diagonal(left, right) :
 
     Parameters
     ----------
+    tf
     left
         Tensor of shape (batch_size, seq_length, m, m)
     right
