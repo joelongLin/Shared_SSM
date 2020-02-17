@@ -1,50 +1,198 @@
 import numpy as np
-import pandas as pd
 import random
-from typing import Dict, Iterator, NamedTuple, Optional, Tuple, Union,Any
+
+
+# Standard library imports
+import itertools
+from collections import defaultdict
+from typing import Any, Dict, Iterable, Iterator, List, Optional  # noqa: F401
+
+# First-party imports
+from gluonts.core.component import DType
+from gluonts.dataset.common import DataEntry, Dataset
+from gluonts.transform import Transformation
+
 DataEntry = Dict[str, Any]
-import pickle
-from gluonts.dataset.repository.datasets import get_dataset
+DataBatch = Dict[str, Any]
 
-class GluontsGroudTruthLoader(object):
-    def __init__(self, config):
-        self.config = config
-        try:
-            self.ds = get_dataset(config.dataset, regenerate=False)
-        except:
-            print('导入的 ground truth 来自于外部')
-            with open('data/groundtruth_{}_{}_{}.pkl'.format(
-            config.dataset, config.past_length, config.prediction_length,
-            ), 'rb') as fp:
-                self.ds = pickle.load(fp)
 
-    def add_ts_dataframe(self,data_iterator: Iterator[DataEntry]):
-        ts_df = []
-        for data_entry in data_iterator:
-            data = data_entry.copy()
-            index = pd.date_range(
-                    start=data["start"],
-                freq=self.config.freq,
-                periods=data["target"].shape[-1],
-            )
-            data["ts"] = pd.DataFrame(
-                index=index, data=data["target"].transpose()
-            )
-            ts_df.append(data)
+class BatchBuffer_NoMX:
+    def __init__(
+        self, batch_size: int, dtype: DType = np.float32
+    ) -> None:
+        self._buffers: Dict[Any, List[Any]] = defaultdict(list)
+        self.batch_size = batch_size
+        self._size = 0
+        self.dtype = dtype
 
-        return ts_df
+    def add(self, d: Dict[str, List[np.ndarray]]):
+        if self._buffers:
+            assert self._buffers.keys() == d.keys()
+        for k, v in d.items():
+            self._buffers[k].append(v)
+        self._size += 1
 
-    def get_ground_truth(self) :
-        ground_truth = []
-        for data_entry in self.add_ts_dataframe(iter(self.ds.test)):
-            ground_truth.append(data_entry["ts"])
-        return ground_truth
+    def __len__(self):
+        return self._size
+
+    def next_batch(self) -> DataBatch:
+        assert self._size > 0
+        n = min(self._size, self.batch_size)
+        batch = {k: self.stack(v[:n]) for k, v in self._buffers.items()}
+        for key in self._buffers.keys():
+            self._buffers[key] = self._buffers[key][n:]
+        self._size -= n
+        return batch
+
+    def stack(self, xs):
+        if isinstance(xs[0], np.ndarray):
+            data = np.asarray(xs)
+            if data.dtype.kind == "f":
+                data = data.astype(self.dtype)
+            return data
+        elif isinstance(xs[0], list):
+            return [self.stack(t) for t in zip(*[x for x in xs])]
+        elif isinstance(xs[0], tuple):
+            return tuple([self.stack(t) for t in zip(*[x for x in xs])])
+        else:
+            return xs  # stack all other types as list
+
+    def shuffle(self):
+        perm = np.random.permutation(self._size)
+        for key in self._buffers.keys():
+            li = self._buffers[key]
+            self._buffers[key] = [li[i] for i in perm]
+
+#TODO：序列都对应了一个Dataset, 而每个Dataset确对应不同的 DataLoader
+def mergeIterOut(loaders : List[Iterable], fields : List[str]):
+   batch = None
+   for iter in loaders:
+       i_batch = next(iter)
+       for name in fields:
+           pass
+
+class DataLoader_NoMX(Iterable[DataEntry]):
+    """
+    An abstract Iterable type for iterating and transforming a dataset,
+    in batches of a prescribed size.
+
+    Parameters
+    ----------
+    dataset
+        The dataset from which to load data.
+    transform
+        A transformation to apply to each entry in the dataset.
+    batch_size
+        The size of the batches to emit.
+    dtype
+        Floating point type to use.
+    """
+
+    def __init__(
+        self,
+        dataset: Dataset,
+        transform: Transformation,
+        batch_size: int,
+        dtype: DType = np.float32,
+    ) -> None:
+        self.dataset = dataset
+        self.transform = transform
+        self.batch_size = batch_size
+        self.dtype = dtype
+
+class TrainDataLoader_NoMX(DataLoader_NoMX):
+           """
+           An Iterable type for iterating and transforming a dataset, in batches of a
+           prescribed size, until a given number of batches is reached.
+
+           The transformation are applied with in training mode, i.e. with the flag
+           `is_train = True`.
+
+           Parameters
+           ----------
+           dataset
+               The dataset from which to load data.
+           transform
+               A transformation to apply to each entry in the dataset.
+           batch_size
+               The size of the batches to emit.
+           num_batches_per_epoch
+               Number of batches to return in one complete iteration over this object.
+           dtype
+               Floating point type to use.
+           """
+
+           def __init__(
+                   self,
+                   dataset: Dataset,
+                   transform: Transformation,
+                   batch_size: int,
+                   num_batches_per_epoch: int,
+                   dtype: DType = np.float32,
+                   shuffle_for_training: bool = True,
+                   num_batches_for_shuffling: int = 10,
+           ) -> None:
+               super().__init__(dataset, transform, batch_size, dtype)
+               self.num_batches_per_epoch = num_batches_per_epoch
+               self.shuffle_for_training = shuffle_for_training
+               self._num_buffered_batches = (
+                   num_batches_for_shuffling if shuffle_for_training else 1
+               )
+               self._cur_iter: Optional[Iterator] = None
+               self._buffer = BatchBuffer_NoMX(self.batch_size, dtype)
+
+           def _emit_batches_while_buffer_larger_than(
+                   self, thresh
+           ) -> Iterator[DataBatch]:
+               if self.shuffle_for_training:
+                   self._buffer.shuffle()
+               while len(self._buffer) > thresh:
+                   yield self._buffer.next_batch()
+
+           def _iterate_forever(
+                   self, collection: Iterable[DataEntry]
+           ) -> Iterator[DataEntry]:
+               # iterate forever over the collection, the collection must be non empty
+               while True:
+                   try:
+                       # 这个 first 就是先经过 ProcessDataEntry 之后的数据集
+                       first = next(iter(collection))
+                   except StopIteration:
+                       raise Exception("empty dataset")
+                   else:
+                       for x in itertools.chain([], collection):  # 在这里修改，使得代码不会重复遍历第一个 collection
+                           yield x
+
+           def __len__(self) -> int:
+               return self.num_batches_per_epoch
+
+           def __iter__(self) -> Iterator[DataBatch]:
+               batch_count = 0
+               if self._cur_iter is None:
+                   self._cur_iter = self.transform(
+                       self._iterate_forever(self.dataset), is_train=True
+                   )  # 在使用 TrainDataLoader 的时候 会默认地使用 is_train=True
+               assert self._cur_iter is not None
+               while True:
+                   data_entry = next(self._cur_iter)
+                   self._buffer.add(data_entry)
+                   if (
+                           len(self._buffer)
+                           >= self._num_buffered_batches * self.batch_size  # 用于判断 是否 batch buffer 里面是否有足够多的 样本
+                   ):
+                       for batch in self._emit_batches_while_buffer_larger_than(
+                               self.batch_size - 1
+                       ):
+                           yield batch
+                           batch_count += 1
+                           if batch_count >= self.num_batches_per_epoch:
+                               return
+
 
 class DataLoader(object):
-
-    # 输入一个 list[samples] ,其中每个 sample 都是一个list
-    def __init__(self,list_dataset,config):
-        self.list_dataset = list_dataset
+    # 输入一个 list[samples] ,其中每个 sample 都是一个 封装好的 TrainDataset
+    def __init__(self,dataset,config):
+        self.dataset = dataset
         self.batch_size = config.batch_size
         self.num_batch =  config.num_batches_per_epoch
         self.shuffle = config.shuffle

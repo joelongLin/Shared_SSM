@@ -13,9 +13,11 @@
 
 # Standard library imports
 import shutil
+from enum import Enum
 from functools import lru_cache
 from pathlib import Path
 from typing import (
+    cast,
     Any,
     Callable,
     Dict,
@@ -24,8 +26,7 @@ from typing import (
     List,
     NamedTuple,
     Optional,
-    Sized,
-    cast,
+    Union,
 )
 
 # Third-party imports
@@ -39,14 +40,13 @@ from pandas.tseries.offsets import Tick
 # First-party imports
 from gluonts.core.exception import GluonTSDataError
 from gluonts.dataset import jsonl, util
-from gluonts.dataset.stat import (
-    DatasetStatistics,
-    calculate_dataset_statistics,
-)
 
 # Dictionary used for data flowing through the transformations.
 # A Dataset is an iterable over such dictionaries.
 DataEntry = Dict[str, Any]
+
+# A Dataset is an iterable of DataEntry.
+Dataset = Iterable[DataEntry]
 
 
 class Timestamp(pd.Timestamp):
@@ -131,7 +131,7 @@ class CategoricalFeatureInfo(pydantic.BaseModel):
 
 
 class MetaData(pydantic.BaseModel):
-    freq: str = pydantic.Schema(..., alias="time_granularity")  # type: ignore
+    freq: str = pydantic.Field(..., alias="time_granularity")  # type: ignore
     target: Optional[BasicFeatureInfo] = None
 
     feat_static_cat: List[CategoricalFeatureInfo] = []
@@ -142,27 +142,12 @@ class MetaData(pydantic.BaseModel):
     prediction_length: Optional[int] = None
 
     class Config(pydantic.BaseConfig):
-        allow_population_by_alias = True
+        allow_population_by_field_name = True
 
 
 class SourceContext(NamedTuple):
     source: str
     row: int
-
-
-class Dataset(Sized, Iterable[DataEntry]):
-    """
-    An abstract class for datasets, i.e., iterable collection of DataEntry.
-    """
-
-    def __iter__(self) -> Iterator[DataEntry]:
-        raise NotImplementedError
-
-    def __len__(self):
-        raise NotImplementedError
-
-    def calc_stats(self) -> DatasetStatistics:
-        return calculate_dataset_statistics(self)
 
 
 class Channel(pydantic.BaseModel):
@@ -188,7 +173,6 @@ class TrainDatasets(NamedTuple):
 class FileDataset(Dataset):
     """
     Dataset that loads JSON Lines files contained in a path.
-
     Parameters
     ----------
     path
@@ -226,16 +210,15 @@ class FileDataset(Dataset):
     def files(self) -> List[Path]:
         """
         List the files that compose the dataset.
-
         Returns
         -------
         List[Path]
             List of the paths of all files composing the dataset.
         """
-        return util.find_files(self.path, FileDataset.is_valid)
+        return util.find_files(self.path, self.is_valid)
 
-    @staticmethod
-    def is_valid(path: Path) -> bool:
+    @classmethod
+    def is_valid(cls, path: Path) -> bool:
         # TODO: given that we only support json, should we also filter json
         # TODO: in the extension?
         return not (path.name.startswith(".") or path.name == "_SUCCESS")
@@ -244,7 +227,6 @@ class FileDataset(Dataset):
 class ListDataset(Dataset):
     """
     Dataset backed directly by an array of dictionaries.
-
     data_iter
         Iterable object yielding all items in the dataset.
         Each item should be a dictionary mapping strings to values.
@@ -275,7 +257,13 @@ class ListDataset(Dataset):
         return len(self.list_data)
 
 
-class ProcessStartField:
+class TimeZoneStrategy(Enum):
+    ignore = "ignore"
+    utc = "utc"
+    error = "error"
+
+
+class ProcessStartField(pydantic.BaseModel):
     """
     Transform the start field into a Timestamp with the given frequency.
 
@@ -287,24 +275,35 @@ class ProcessStartField:
         Frequency to use. This must be a valid Pandas frequency string.
     """
 
-    def __init__(self, name: str, freq: str) -> None:
-        self.name = name
-        self.freq = freq
+    class Config:
+        arbitrary_types_allowed = True
+
+    freq: Union[str, pd.DateOffset]
+    name: str = "start"
+    tz_strategy: TimeZoneStrategy = TimeZoneStrategy.error
 
     def __call__(self, data: DataEntry) -> DataEntry:
         try:
-            value = ProcessStartField.process(data[self.name], self.freq)
+            timestamp = ProcessStartField.process(data[self.name], self.freq)
         except (TypeError, ValueError) as e:
             raise GluonTSDataError(
                 f'Error "{e}" occurred, when reading field "{self.name}"'
             )
 
-        if value.tz is not None:
-            raise GluonTSDataError(
-                f'Timezone information is not supported, but provided in the "{self.name}" field'
-            )
+        if timestamp.tz is not None:
+            if self.tz_strategy == TimeZoneStrategy.error:
+                raise GluonTSDataError(
+                    "Timezone information is not supported, "
+                    f'but provided in the "{self.name}" field.'
+                )
+            elif self.tz_strategy == TimeZoneStrategy.utc:
+                # align timestamp to utc timezone
+                timestamp = timestamp.tz_convert("UTC")
 
-        data[self.name] = value
+            # removes timezone information
+            timestamp = timestamp.tz_localize(None)
+
+        data[self.name] = timestamp
 
         return data
 
@@ -329,15 +328,6 @@ class ProcessStartField:
         )
 
         return timestamp.freq.rollforward(timestamp)
-
-
-def rollback(timestamp):
-    offset = timestamp.freq
-    # if not offset.onOffset(timestamp):
-    return timestamp - offset.__class__(
-        offset.n, normalize=True, **offset.kwds
-    )
-    # return timestamp
 
 
 class ProcessTimeSeriesField:
@@ -413,7 +403,7 @@ class ProcessDataEntry:
         self.trans = cast(
             List[Callable[[DataEntry], DataEntry]],
             [
-                ProcessStartField("start", freq=freq),
+                ProcessStartField(freq=freq),
                 # The next line abuses is_static=True in case of 1D targets.
                 ProcessTimeSeriesField(
                     "target",

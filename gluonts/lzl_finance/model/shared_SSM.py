@@ -1,5 +1,4 @@
 import logging
-
 import tensorflow as tf
 from tensorflow import Tensor
 import numpy as np
@@ -8,125 +7,153 @@ import time
 import os
 from tqdm import tqdm
 import json
+import logging
 import matplotlib.pyplot as plt
+from .data_loader import DataLoader
+from gluonts.time_feature import time_features_from_frequency_str
 from gluonts.model.forecast import SampleForecast
-
+from gluonts.transform import Chain , AddObservedValuesIndicator, AddTimeFeatures, AddAgeFeature, VstackFeatures,SwapAxes
+from gluonts.dataset.field_names import FieldName
+from .data_loader import TrainDataLoader_NoMX
 # 将当前序列所在的编号(相当于告诉你当前的序列信息)变成一个embedding向量
-class FeatureEmbedder(object):
-    def __init__(self,cardinalities,embedding_dims):
-        assert (
-                len(cardinalities) > 0
-        ), "Length of `cardinalities` list must be greater than zero"
-        assert len(cardinalities) == len(
-            embedding_dims
-        ), "Length of `embedding_dims` and `embedding_dims` should match"
-        assert all(
-            [c > 0 for c in cardinalities]
-        ), "Elements of `cardinalities` should be > 0"
-        assert all(
-            [d > 0 for d in embedding_dims]
-        ), "Elements of `embedding_dims` should be > 0"
-
-        self.__num_features = len(cardinalities)
-
-        def create_embedding(i: int, c: int, d: int) :
-            embedding = tf.get_variable(name=f"cat_{i}_embedding" , shape=[c,d])
-            return embedding
-
-        with tf.variable_scope('feature_embedder'):
-            self.__embedders = [
-                create_embedding(i, c, d)
-                for i, (c, d) in enumerate(zip(cardinalities, embedding_dims))
-            ]
-
-    def build_forward(self, features):
-        '''
-        :param features: Categorical features with shape: dynamic (N,T,C) or static (N,C), where C is the
-            number of categorical features.
-        :return: concatenated_tensor: Tensor
-            Concatenated tensor of embeddings whth shape: (N,T,C) or (N,C),
-            where C is the sum of the embedding dimensions for each categorical
-            feature, i.e. C = sum(self.config.embedding_dims).
-        '''
-        if self.__num_features > 1:
-            # we slice the last dimension, giving an array of length self.__num_features with shape (N,T) or (N)
-            cat_feature_slices = tf.split(
-                features, num_or_size_splits=self.__num_features,axis=-1
-            )
-        else:
-            # F.split will iterate over the second-to-last axis if the last axis is one
-            cat_feature_slices = [features]
-
-        return tf.concat(
-            [
-                tf.nn.embedding_lookup(embed ,tf.dtypes.cast(tf.squeeze(cat_feature_slice, axis=-1) ,dtype=tf.int32))
-                for embed, cat_feature_slice in zip(
-                    self.__embedders, cat_feature_slices
-                )
-            ],
-            axis=-1,
-        )
 
 class SharedSSM(object):
     def __init__(self, config , sess):
         self.config = config
         self.sess = sess
 
-        # dataset configuration
-        self.dataset = config.dataset
-        self.freq = config.freq
-        self.past_length = config.past_length
-        self.prediction_length = config.prediction_length
+        #导入原始的数据 , 确定了 SSM 的数量 ， env_dim 的维度，将ListData对象存放在list中
+        self.load_original_data()
 
-        # target 数据集
-        with open('data/train_{}_{}_{}.pkl'.format(self.dataset , self.past_length,self.prediction_length) , 'rb') as fp:
-            self.train_data = pickle.load(fp)
-        with open('data/test_{}_{}_{}.pkl'.format(self.dataset , self.past_length,self.prediction_length) , 'rb') as fp:
-            self.test_data = pickle.load(fp)
-
-        # covariate 数据集
-        # TODO: 这里需要在
-        shape_list = []
-        for input in self.train_data[0]:
-            shape_list.append(input.shape)
-
-        # covariate 数据集
-
-        # 将数据集放入 DataLoader 中产生一个 iterator
-        self.train_iter =  DataLoader(self.train_data, self.config).data_iterator(is_train=True)
-        self.test_iter = DataLoader(self.test_data , self.config).data_iterator(is_train=False)
-
-
-        # network configuration
-        self.batch_size = config.batch_size
-        self.num_layers = config.num_layers
-        self.num_cells = config.num_cells
-        self.cell_type = config.cell_type
-        self.dropout_rate = config.dropout_rate
-
-        #prediciton configuration
-        self.num_sample_paths = config.num_eval_samples
-        self.scaling = config.scaling
-        self.use_feat_dynamic_real = config.use_feat_dynamic_real
-        self.use_feat_static_cat = config.use_feat_static_cat
-        self.cardinality = [int(num) for num in config.cardinality.split(',')] if self.use_feat_static_cat else [1]
-        embed_split = config.embedding_dimension.split(',')
-        self.embedding_dimension = [int(num) for num in embed_split] if len(embed_split) > 1 \
-            else [min(50, (cat + 1) // 2) for cat in self.cardinality]
-
-        self.issm = CompositeISSM.get_from_freq(self.freq, self.add_trend)
-
-        self.univariate = self.issm.output_dim() == 1
-
+        #TODO: 将导入的原始数据变成 placeholder需要的内容，并放入dataloader中, 使其能产生
+        self.transform_data()
 
         # 开始搭建有可能Input 对应的 placeholder
-        self.feat_static_cat = tf.placeholder(dtype=tf.float32 , shape=[self.batch_size , shape_list[0][0]])
-        self.past_observed_values = tf.placeholder(dtype=tf.float32 , shape=[self.batch_size ,self.past_length, shape_list[1][1]])
-        self.past_seasonal_indicators = tf.placeholder(dtype=tf.float32 , shape = [self.batch_size,self.past_length , shape_list[2][1]])
-        self.past_time_feat = tf.placeholder(dtype=tf.float32 , shape =[self.batch_size ,self.past_length, shape_list[3][1]])
-        self.past_target = tf.placeholder(dtype=tf.float32 , shape =[self.batch_size ,self.past_length, shape_list[4][1]])
-        self.future_seasonal_indicators = tf.placeholder(dtype=tf.float32 , shape=[self.batch_size ,self.prediction_length, shape_list[2][1]])
-        self.future_time_feat = tf.placeholder(dtype=tf.float32 , shape=[self.batch_size ,self.prediction_length, shape_list[3][1]])
+        self.placeholders = {
+            "past_environment" : tf.placeholder(dtype=tf.float32, shape=[config.batch_size ,config.past_length,self.env_dim], name="past_environment"),
+            "pred_environment" : tf.placeholder(dtype=tf.float32, shape=[config.batch_size ,config.pred_length,self.env_dim], name="pred_environment"),
+            "past_time_feature": tf.placeholder(dtype=tf.float32,shape=[config.batch_size, config.past_length, self.time_dim],name="past_environment"),
+            "pred_time_feature": tf.placeholder(dtype=tf.float32,shape=[config.batch_size, config.pred_length, self.time_dim],name="pred_environment"),
+            "past_target" : tf.placeholder(dtype=tf.float32, shape=[config.batch_size, self.ssm_num ,config.past_length,1], name="past_target"),
+            "pred_target" : tf.placeholder(dtype=tf.float32, shape=[config.batch_size, self.ssm_num ,config.pred_length,1], name="pred_target")
+        }
+
+        # 放入可能出现的SSM参数
+        #  A(transition)是对角矩阵表示在转移的时候尽可能保持不变, B(control) 和 C(emission) 从高斯分布中随机进行采样
+        A = np.array([np.eye(config.dim_z).astype(np.float32) for _ in range(config.K)])  # (K, dim_z , dim_z)
+        B = np.array([config.init_kf_matrices * np.random.randn(config.dim_z, config.dim_u).astype(np.float32)
+                      for _ in range(config.K)])
+        C = np.array([config.init_kf_matrices * np.random.randn(config.dim_a, config.dim_z).astype(np.float32)
+                      for _ in range(config.K)])
+
+    def load_original_data(self):
+        name_prefix = 'data_process/processed_data/{}_{}_{}_{}.pkl'
+        # 导入 target 以及 environment 的数据
+        ds_names = ','.join([self.config.target,self.config.environment])
+        if self.config.slice == 'overlap':
+            series = self.config.timestep - self.config.past_length - self.config.pred_length + 1
+            print('每个数据集的序列数量为 ,', series)
+        target_path = [name_prefix.format(
+            name, '%s_DsSeries_%d' % (self.config.slice, series),
+                           'train_%d' % self.config.past_length, 'pred_%d' % self.config.pred_length,
+        ) for name in self.config.target.split(',')]
+        env_path = [name_prefix.format(
+            name, '%s_DsSeries_%d' % (self.config.slice, series),
+                           'train_%d' % self.config.past_length, 'pred_%d' % self.config.pred_length,
+        ) for name in self.config.environment.split(',')]
+
+
+        for path in target_path+env_path:
+            # 循环 path 的时候 需要 得到当前 path 对应的 ds_name
+            for ds_name in ds_names.split(','):
+                if ds_name in path:
+                    break
+            if not os.path.exists(path) :
+                logging.info('there is no dataset [%s] , creating...'%ds_name)
+                os.system('python data_process/preprocessing.py -d={} -t={} -p={} -s={} -n={} -f={}'
+                          .format(ds_name
+                              , self.config.past_length
+                              , self.config.pred_length
+                              , self.config.slice
+                              , self.config.timestep
+                              , self.config.freq))
+            else:
+                logging.info(' dataset [%s] was found , good~~~' % ds_name)
+        self.target_data , self.env_data = [] , []
+        # 由于 target 应该都是 dim = 1 只是确定有多少个 SSM 而已
+        for target in target_path:
+            with open(target, 'rb') as fp:
+                target_ds = pickle.load(fp)
+                assert target_ds.metadata['dim'] == 1 , 'target 序列的维度都应该为1'
+                self.target_data.append(target_ds)
+
+        self.ssm_num = len(self.target_data)
+        self.env_dim = 0
+        for env in env_path:
+            with open(env, 'rb') as fp:
+                env_ds = pickle.load(fp)
+                self.env_dim += env_ds.metadata['dim']
+                self.env_data.append(env_ds)
+        print('导入原始数据成功~~~')
+
+    def transform_data(self):
+        # 首先需要把 target
+        time_features = time_features_from_frequency_str(self.config.freq)
+        self.time_dim = len(time_features)
+        transformation = Chain([
+            SwapAxes(
+                input_fields=[FieldName.TARGET],
+                axes=[0,1],
+            ),
+            AddObservedValuesIndicator(
+                target_field = FieldName.TARGET,
+                output_field = FieldName.OBSERVED_VALUES,
+            ),
+            # TODO: 这里的 AddTimeFeatures，面对的ts, 维度应该为(features,T)
+            AddTimeFeatures(
+                start_field=FieldName.START,
+                target_field=FieldName.TARGET,
+                output_field=FieldName.FEAT_TIME,
+                time_features=time_features,
+                pred_length=self.config.pred_length,
+            ),
+            AddAgeFeature(
+                target_field=FieldName.TARGET,
+                output_field=FieldName.FEAT_AGE,
+                pred_length=self.config.pred_length,
+                log_scale=True,
+            ),
+            VstackFeatures(
+                output_field=FieldName.FEAT_TIME,
+                input_fields=[FieldName.FEAT_TIME, FieldName.FEAT_AGE]
+            ),
+        ])
+        print('已设置时间特征~~')
+        # 设置环境变量的 dataloader
+        self.env_loaders = [iter(TrainDataLoader_NoMX(
+            dataset = self.env_data[i].train,
+            transform = transformation,
+            batch_size = self.config.batch_size,
+            num_batches_per_epoch = self.config.num_batches_per_epoch,
+            shuffle_for_training = False,
+        )) for i in range(len(self.env_data))]
+        self.target_loaders = [iter(TrainDataLoader_NoMX(
+            dataset=self.target_data[i].train,
+            transform=transformation,
+            batch_size=self.config.batch_size,
+            num_batches_per_epoch=self.config.num_batches_per_epoch,
+            shuffle_for_training=False,
+        )) for i in range(len(self.target_data))]
+        # with tqdm(self.env_loaders[0]) as it:
+            # for batch_no, data_entry in enumerate(it, start=1):
+            #     pass
+        iterator = iter(self.env_loaders[0])
+        print(iterator)
+        data = next(iterator)
+        print('data 0 start contents :' , data[FieldName.START])
+        data_1 = next(iterator)
+        print('data 1 start contents :', data_1[FieldName.START])
+        exit()
 
     def build_module(self):
         with tf.variable_scope('deepstate', initializer=tf.contrib.layers.xavier_initializer() , reuse=tf.AUTO_REUSE):
@@ -378,7 +405,7 @@ class SharedSSM(object):
         sess = self.sess
         self.writer_path = os.path.join(self.config.logs_dir,
                                    '_'.join([self.config.dataset, str(self.config.past_length)
-                                                , str(self.config.prediction_length)]))
+                                                , str(self.config.pred_length)]))
         if not os.path.isdir(self.writer_path):
             os.mkdir(self.writer_path)
         #将当前训练的参数输入到路径中
@@ -476,9 +503,9 @@ class SharedSSM(object):
                 print('something bad appears')
             finally:
                 print('whatever ! life is still fantastic !')
-        iteration = len(self.test_data)//self.batch_size+1 \
-                    if len(self.test_data)%self.batch_size!=0 \
-                    else len(self.test_data)//self.batch_size
+        iteration = len(self.env_data) // self.batch_size + 1 \
+                    if len(self.env_data) % self.batch_size != 0 \
+                    else len(self.env_data) // self.batch_size
         for batch_no in range(iteration):
             test_input , other_info = next(self.test_iter)
             placeholders = [self.feat_static_cat, self.past_observed_values
@@ -503,7 +530,7 @@ class SharedSSM(object):
                 )
                 # if batch_no < len(self.test_data) // self.batch_size :
                 #     self.all_forecast_result.append(sample_forecast)
-                if batch_no*self.batch_size + i < len(self.test_data):
+                if batch_no*self.batch_size + i < len(self.env_data):
                     self.all_forecast_result.append(sample_forecast)
                 else:
                     print('%d batch %d sample was complicate , throw away' %(batch_no,i))
@@ -525,7 +552,7 @@ class SharedSSM(object):
             eval_path = os.path.join(self.config.reload_model , "metrics.json")
         with open(eval_path, 'w') as f:
             json.dump(finance_eval, f, indent=4)
-        # plot_length = self.config.past_length + self.config.prediction_length
+        # plot_length = self.config.past_length + self.config.pred_length
         # for i in range(321):#对于electricity来说，总共由321列
         #     plot_prob_forecasts(ground_truth[i] , forecast[i] ,self.config.dataset,i,plot_length)
         #
