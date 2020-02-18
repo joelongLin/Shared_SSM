@@ -9,12 +9,11 @@ from tqdm import tqdm
 import json
 import logging
 import matplotlib.pyplot as plt
-from .data_loader import DataLoader
 from gluonts.time_feature import time_features_from_frequency_str
 from gluonts.model.forecast import SampleForecast
 from gluonts.transform import Chain , AddObservedValuesIndicator, AddTimeFeatures, AddAgeFeature, VstackFeatures,SwapAxes
 from gluonts.dataset.field_names import FieldName
-from .data_loader import TrainDataLoader_NoMX
+from .data_loader import TrainDataLoader_NoMX , mergeIterOut , stackIterOut
 # 将当前序列所在的编号(相当于告诉你当前的序列信息)变成一个embedding向量
 
 class SharedSSM(object):
@@ -25,7 +24,7 @@ class SharedSSM(object):
         #导入原始的数据 , 确定了 SSM 的数量 ， env_dim 的维度，将ListData对象存放在list中
         self.load_original_data()
 
-        #TODO: 将导入的原始数据变成 placeholder需要的内容，并放入dataloader中, 使其能产生
+        #将导入的原始数据放入dataloader中, 使其能产生placeholders需要的内容
         self.transform_data()
 
         # 开始搭建有可能Input 对应的 placeholder
@@ -127,33 +126,31 @@ class SharedSSM(object):
                 output_field=FieldName.FEAT_TIME,
                 input_fields=[FieldName.FEAT_TIME, FieldName.FEAT_AGE]
             ),
+            SwapAxes(
+                input_fields=[FieldName.TARGET, FieldName.FEAT_TIME, FieldName.OBSERVED_VALUES],
+                axes=[0, 1],
+            )
         ])
         print('已设置时间特征~~')
         # 设置环境变量的 dataloader
-        self.env_loaders = [iter(TrainDataLoader_NoMX(
+        env_iters = [iter(TrainDataLoader_NoMX(
             dataset = self.env_data[i].train,
             transform = transformation,
             batch_size = self.config.batch_size,
             num_batches_per_epoch = self.config.num_batches_per_epoch,
             shuffle_for_training = False,
         )) for i in range(len(self.env_data))]
-        self.target_loaders = [iter(TrainDataLoader_NoMX(
+        target_iters = [iter(TrainDataLoader_NoMX(
             dataset=self.target_data[i].train,
             transform=transformation,
             batch_size=self.config.batch_size,
             num_batches_per_epoch=self.config.num_batches_per_epoch,
             shuffle_for_training=False,
         )) for i in range(len(self.target_data))]
-        # with tqdm(self.env_loaders[0]) as it:
-            # for batch_no, data_entry in enumerate(it, start=1):
-            #     pass
-        iterator = iter(self.env_loaders[0])
-        print(iterator)
-        data = next(iterator)
-        print('data 0 start contents :' , data[FieldName.START])
-        data_1 = next(iterator)
-        print('data 1 start contents :', data_1[FieldName.START])
-        exit()
+
+        self.env_loader = mergeIterOut(env_iters , fields=[FieldName.OBSERVED_VALUES , FieldName.FEAT_TIME , FieldName.TARGET])
+        self.target_loader = stackIterOut(target_iters , fields=[FieldName.OBSERVED_VALUES , FieldName.FEAT_TIME , FieldName.TARGET]  , dim=1 )
+
 
     def build_module(self):
         with tf.variable_scope('deepstate', initializer=tf.contrib.layers.xavier_initializer() , reuse=tf.AUTO_REUSE):

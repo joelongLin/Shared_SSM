@@ -43,7 +43,7 @@ cl.DEFINE_integer('fifo_size', 1, 'Number of items in the alpha FIFO memory (if 
 
 # dataset configuration
 cl.DEFINE_string('target' , 'btc,eth' , 'Name of the target dataset')
-cl.DEFINE_string('environment' , 'gold' , 'Name of the dataset ')
+cl.DEFINE_string('environment' , 'gold,gold' , 'Name of the dataset ')
 cl.DEFINE_integer('timestep' , 503 , 'length of the series') #这个序列的长度实际上也决定了样本数量的大小
 cl.DEFINE_string('slice' , 'overlap' , 'how to slice the dataset')
 cl.DEFINE_string('freq','1D','Frequency of the data to train on and predict')

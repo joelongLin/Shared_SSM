@@ -65,11 +65,29 @@ class BatchBuffer_NoMX:
 
 #TODO：序列都对应了一个Dataset, 而每个Dataset确对应不同的 DataLoader
 def mergeIterOut(loaders : List[Iterable], fields : List[str]):
-   batch = None
-   for iter in loaders:
-       i_batch = next(iter)
-       for name in fields:
-           pass
+    while True:
+        batch = {}
+        for iter in loaders:
+            i_batch = next(iter)
+            if len(batch) == 0:
+                batch = i_batch.copy()
+            else:
+                for name in fields:
+                    batch[name] = np.concatenate((batch[name] , i_batch[name]), axis=-1)
+        yield batch
+
+#将目标序列的单序列拼接起来
+def stackIterOut(loaders : List[Iterable], fields : List[str] , dim : int):
+    while True:
+        batch = {}
+        for iter in loaders:
+            i_batch = next(iter)
+            if len(batch) == 0:
+                batch = i_batch.copy()
+            else:
+                for name in fields:
+                    batch[name] = np.stack((batch[name] , i_batch[name]), axis=dim)
+        yield batch
 
 class DataLoader_NoMX(Iterable[DataEntry]):
     """
@@ -129,7 +147,7 @@ class TrainDataLoader_NoMX(DataLoader_NoMX):
                    batch_size: int,
                    num_batches_per_epoch: int,
                    dtype: DType = np.float32,
-                   shuffle_for_training: bool = True,
+                   shuffle_for_training: bool = False,
                    num_batches_for_shuffling: int = 10,
            ) -> None:
                super().__init__(dataset, transform, batch_size, dtype)
