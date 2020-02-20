@@ -89,7 +89,7 @@ inference_data_loader = InferenceDataLoader(
             estimator.create_transformation(),
             estimator.trainer.batch_size,
             ctx=estimator.trainer.ctx,
-            float_type=estimator.float_type,
+            dtype=estimator.float_type,
         )
 input_names =['feat_static_cat', 'past_observed_values'
     , 'past_seasonal_indicators', 'past_time_feat'

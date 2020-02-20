@@ -11,9 +11,17 @@ import logging
 import matplotlib.pyplot as plt
 from gluonts.time_feature import time_features_from_frequency_str
 from gluonts.model.forecast import SampleForecast
-from gluonts.transform import Chain , AddObservedValuesIndicator, AddTimeFeatures, AddAgeFeature, VstackFeatures,SwapAxes
+from gluonts.transform import (Chain ,
+                               AddObservedValuesIndicator,
+                               AddTimeFeatures,
+                               AddAgeFeature,
+                               VstackFeatures,
+                               SwapAxes,
+                               CanonicalInstanceSplitter,
+                               InstanceSplitter)
+from gluonts.transform.sampler import TestSplitSampler
 from gluonts.dataset.field_names import FieldName
-from .data_loader import TrainDataLoader_NoMX , mergeIterOut , stackIterOut
+from .data_loader import TrainDataLoader_OnlyPast ,InferenceDataLoader_WithFuture, mergeIterOut , stackIterOut
 # 将当前序列所在的编号(相当于告诉你当前的序列信息)变成一个embedding向量
 
 class SharedSSM(object):
@@ -31,8 +39,8 @@ class SharedSSM(object):
         self.placeholders = {
             "past_environment" : tf.placeholder(dtype=tf.float32, shape=[config.batch_size ,config.past_length,self.env_dim], name="past_environment"),
             "pred_environment" : tf.placeholder(dtype=tf.float32, shape=[config.batch_size ,config.pred_length,self.env_dim], name="pred_environment"),
-            "past_time_feature": tf.placeholder(dtype=tf.float32,shape=[config.batch_size, config.past_length, self.time_dim],name="past_environment"),
-            "pred_time_feature": tf.placeholder(dtype=tf.float32,shape=[config.batch_size, config.pred_length, self.time_dim],name="pred_environment"),
+            "past_time_feature": tf.placeholder(dtype=tf.float32,shape=[config.batch_size, config.past_length, self.time_dim],name="past_time_feature"),
+            "pred_time_feature": tf.placeholder(dtype=tf.float32,shape=[config.batch_size, config.pred_length, self.time_dim],name="pred_time_feature"),
             "past_target" : tf.placeholder(dtype=tf.float32, shape=[config.batch_size, self.ssm_num ,config.past_length,1], name="past_target"),
             "pred_target" : tf.placeholder(dtype=tf.float32, shape=[config.batch_size, self.ssm_num ,config.pred_length,1], name="pred_target")
         }
@@ -126,32 +134,101 @@ class SharedSSM(object):
                 output_field=FieldName.FEAT_TIME,
                 input_fields=[FieldName.FEAT_TIME, FieldName.FEAT_AGE]
             ),
-            SwapAxes(
-                input_fields=[FieldName.TARGET, FieldName.FEAT_TIME, FieldName.OBSERVED_VALUES],
-                axes=[0, 1],
+            # CanonicalInstanceSplitter(
+            #     target_field=FieldName.TARGET,
+            #     is_pad_field=FieldName.IS_PAD,
+            #     start_field=FieldName.START,
+            #     forecast_start_field=FieldName.FORECAST_START,
+            #     instance_sampler=TestSplitSampler(),
+            #     time_series_fields=[
+            #         FieldName.FEAT_TIME,
+            #         FieldName.OBSERVED_VALUES,
+            #     ],
+            #     allow_target_padding=True,
+            #     instance_length=self.config.past_length,
+            #     use_prediction_features=True,
+            #     prediction_length=self.config.pred_length,
+            # ),
+            InstanceSplitter(
+                target_field=FieldName.TARGET,
+                is_pad_field=FieldName.IS_PAD,
+                start_field=FieldName.START,
+                forecast_start_field=FieldName.FORECAST_START,
+                train_sampler=TestSplitSampler(),
+                past_length=self.config.past_length,
+                future_length=self.config.pred_length,
+                output_NTC=True,
+                time_series_fields=[
+                    FieldName.FEAT_TIME,
+                    FieldName.OBSERVED_VALUES
+                ],
+                pick_incomplete=False,
             )
+
         ])
         print('已设置时间特征~~')
         # 设置环境变量的 dataloader
-        env_iters = [iter(TrainDataLoader_NoMX(
+        env_train_iters = [iter(TrainDataLoader_OnlyPast(
             dataset = self.env_data[i].train,
             transform = transformation,
             batch_size = self.config.batch_size,
             num_batches_per_epoch = self.config.num_batches_per_epoch,
-            shuffle_for_training = False,
         )) for i in range(len(self.env_data))]
-        target_iters = [iter(TrainDataLoader_NoMX(
+        env_test_iters = [iter(InferenceDataLoader_WithFuture(
+            dataset=self.env_data[i].test,
+            transform=transformation,
+            batch_size=self.config.batch_size,
+        )) for i in range(len(self.env_data))]
+        target_train_iters = [iter(TrainDataLoader_OnlyPast(
             dataset=self.target_data[i].train,
             transform=transformation,
             batch_size=self.config.batch_size,
             num_batches_per_epoch=self.config.num_batches_per_epoch,
-            shuffle_for_training=False,
+        )) for i in range(len(self.target_data))]
+        target_test_iters = [iter(InferenceDataLoader_WithFuture(
+            dataset=self.target_data[i].test,
+            transform=transformation,
+            batch_size=self.config.batch_size,
         )) for i in range(len(self.target_data))]
 
-        self.env_loader = mergeIterOut(env_iters , fields=[FieldName.OBSERVED_VALUES , FieldName.FEAT_TIME , FieldName.TARGET])
-        self.target_loader = stackIterOut(target_iters , fields=[FieldName.OBSERVED_VALUES , FieldName.FEAT_TIME , FieldName.TARGET]  , dim=1 )
-
-
+        self.env_train_loader = mergeIterOut(env_train_iters,
+                                             fields=[FieldName.OBSERVED_VALUES , FieldName.FEAT_TIME , FieldName.TARGET],
+                                             include_future=True)
+        self.target_train_loader = stackIterOut(target_train_iters,
+                                                fields=[FieldName.OBSERVED_VALUES , FieldName.FEAT_TIME , FieldName.TARGET],
+                                                dim=1,
+                                                include_future=False)
+        self.env_test_loader = mergeIterOut(env_test_iters,
+                                            fields=[FieldName.OBSERVED_VALUES , FieldName.FEAT_TIME , FieldName.TARGET],
+                                            include_future=True)
+        self.target_test_loader = stackIterOut(target_test_iters,
+                                               fields=[FieldName.OBSERVED_VALUES, FieldName.FEAT_TIME,
+                                                        FieldName.TARGET],
+                                               dim=1,
+                                               include_future=True)
+        # 做training 时
+        print('\n----- training数据集 ------')
+        for batch_no , batch_data in enumerate(self.target_train_loader , start=1):
+            if batch_data != None :
+                print('第{}个batch的内容 past_target: {}  , past_time : {} ,'.format(
+                    batch_no,
+                    batch_data['past_target'].shape ,
+                    batch_data['past_time_feat'].shape,
+                ))
+            else:
+                print('第' , batch_no , '内容为空')
+        # 做inference 时
+        print('\n----- inference数据集 ------')
+        for batch_no ,batch_data in enumerate(self.target_test_loader , start=1):
+            if batch_data != None:
+                print('第{}个batch的内容 past_target: {} , future_target: {} , past_time : {} , future_time : {}'.format(
+                    batch_no,
+                    batch_data['past_target'].shape, batch_data['future_target'].shape,
+                    batch_data['past_time_feat'].shape, batch_data['future_time_feat'].shape
+                ))
+            else:
+                print('第' , batch_no ,'内容为空')
+        exit()
     def build_module(self):
         with tf.variable_scope('deepstate', initializer=tf.contrib.layers.xavier_initializer() , reuse=tf.AUTO_REUSE):
             self.prior_mean_model = tf.layers.Dense(units=self.issm.latent_dim(),dtype=tf.float32 ,name='prior_mean')

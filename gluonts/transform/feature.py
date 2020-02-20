@@ -29,11 +29,6 @@ def target_transformation_length(
 ) -> int:
     return target.shape[-1] + (0 if is_train else pred_length)
 
-def target_transformation_length_time_first(
-    target: np.array, pred_length: int, is_train: bool
-) -> int:
-    return target.shape[0] + (0 if is_train else pred_length)
-
 class AddObservedValuesIndicator(SimpleTransformation):
     """
     Replaces missing values in a numpy array (NaNs) with a dummy value and adds

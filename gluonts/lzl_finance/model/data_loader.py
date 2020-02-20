@@ -15,6 +15,12 @@ from gluonts.transform import Transformation
 DataEntry = Dict[str, Any]
 DataBatch = Dict[str, Any]
 
+def _past(ts_field):
+    return f"past_{ts_field}"
+
+
+def _future(ts_field):
+    return f"future_{ts_field}"
 
 class BatchBuffer_NoMX:
     def __init__(
@@ -64,29 +70,61 @@ class BatchBuffer_NoMX:
             self._buffers[key] = [li[i] for i in perm]
 
 #TODO：序列都对应了一个Dataset, 而每个Dataset确对应不同的 DataLoader
-def mergeIterOut(loaders : List[Iterable], fields : List[str]):
-    while True:
+def mergeIterOut(
+        loaders : List[Iterable],
+        fields : List[str],
+        include_future : bool
+):
+    flag = True
+    while flag:
         batch = {}
         for iter in loaders:
-            i_batch = next(iter)
-            if len(batch) == 0:
-                batch = i_batch.copy()
-            else:
-                for name in fields:
-                    batch[name] = np.concatenate((batch[name] , i_batch[name]), axis=-1)
+            try:
+                i_batch = next(iter)
+                if len(batch) == 0:
+                    batch = i_batch.copy()
+                else:
+                    for name in fields:
+                        _name = _past(name)
+                        batch[_name] = np.concatenate((batch[_name], i_batch[_name]), axis=-1)
+                        if include_future:
+                            _name = _future(name)
+                            batch[_name] = np.concatenate((batch[_name], i_batch[_name]), axis=-1)
+            except Exception:
+                flag = False
+                break
+            finally:
+                pass
         yield batch
 
 #将目标序列的单序列拼接起来
-def stackIterOut(loaders : List[Iterable], fields : List[str] , dim : int):
-    while True:
+def stackIterOut(
+        loaders : List[Iterable],
+        fields : List[str] ,
+        dim : int ,
+        include_future : bool
+):
+    flag = True
+    while flag:
         batch = {}
         for iter in loaders:
-            i_batch = next(iter)
-            if len(batch) == 0:
-                batch = i_batch.copy()
-            else:
-                for name in fields:
-                    batch[name] = np.stack((batch[name] , i_batch[name]), axis=dim)
+            try:
+                i_batch = next(iter)
+                if len(batch) == 0:
+                    batch = i_batch.copy()
+                else:
+                    for name in fields:
+                        _name = _past(name)
+                        batch[_name] = np.stack((batch[_name], i_batch[_name]), axis=dim)
+                        if include_future:
+                            _name = _future(name)
+                            batch[_name] = np.stack((batch[_name], i_batch[_name]), axis=dim)
+            except Exception:
+                flag = False
+                batch = None
+                break
+            finally:
+                pass
         yield batch
 
 class DataLoader_NoMX(Iterable[DataEntry]):
@@ -118,7 +156,8 @@ class DataLoader_NoMX(Iterable[DataEntry]):
         self.batch_size = batch_size
         self.dtype = dtype
 
-class TrainDataLoader_NoMX(DataLoader_NoMX):
+# 因为数据预处理时已经切好片了，每条时间序列，所以is_train = False
+class TrainDataLoader_OnlyPast(DataLoader_NoMX):
            """
            An Iterable type for iterating and transforming a dataset, in batches of a
            prescribed size, until a given number of batches is reached.
@@ -188,7 +227,7 @@ class TrainDataLoader_NoMX(DataLoader_NoMX):
                batch_count = 0
                if self._cur_iter is None:
                    self._cur_iter = self.transform(
-                       self._iterate_forever(self.dataset), is_train=True
+                       self._iterate_forever(self.dataset), is_train=False
                    )  # 在使用 TrainDataLoader 的时候 会默认地使用 is_train=True
                assert self._cur_iter is not None
                while True:
@@ -206,6 +245,38 @@ class TrainDataLoader_NoMX(DataLoader_NoMX):
                            if batch_count >= self.num_batches_per_epoch:
                                return
 
+# 因为数据预处理时放入此InferenceLoader的数据集长度永远为 past+pred, 是包含预测域信息的, 所以is_train=True
+class InferenceDataLoader_WithFuture(DataLoader_NoMX):
+    """
+    An Iterable type for iterating and transforming a dataset just once, in
+    batches of a prescribed size.
+
+    The transformation are applied with in inference mode, i.e. with the flag
+    `is_train = False`. 不能无限产生数据，且产生数据的模式 is_train=False
+
+    Parameters
+    ----------
+    dataset
+        The dataset from which to load data.
+    transform
+        A transformation to apply to each entry in the dataset.
+    batch_size
+        The size of the batches to emit.
+    ctx
+        MXNet context to use to store data.
+    dtype
+        Floating point type to use.
+    """
+
+    def __iter__(self) -> Iterator[DataBatch]:
+        buffer = BatchBuffer_NoMX(self.batch_size, self.dtype)
+        # TODO: 这里面修改源码，只是想让loader只出一遍数据集，但是传入的数据集 是包括了 past + pred
+        for data_entry in self.transform(iter(self.dataset), is_train=True):
+            buffer.add(data_entry)
+            if len(buffer) >= self.batch_size:
+                yield buffer.next_batch()
+        if len(buffer) > 0:
+            yield buffer.next_batch()
 
 class DataLoader(object):
     # 输入一个 list[samples] ,其中每个 sample 都是一个 封装好的 TrainDataset
