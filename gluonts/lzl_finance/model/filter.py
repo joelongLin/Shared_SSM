@@ -9,51 +9,51 @@ class KalmanFilter(object):
     network alpha.
     """
 
-    def __init__(self, dim_z, dim_y, dim_u=0, dim_k=1, **kwargs):
+    def __init__(self, dim_l, dim_z, dim_u=0, dim_k=1, **kwargs):
 
-        self.dim_z = dim_z
-        self.dim_y = dim_y  #stands for the pseudo observation
-        self.dim_u = dim_u  #stands for the externel input
+        self.dim_z = dim_l
+        self.dim_y = dim_z  #stands for the target observation
+        self.dim_u = dim_u  #stands for the enviroment input
         self.dim_k = dim_k  #stands number of the global transition
 
         # Initializer for identity matrix
         self.eye_init = lambda shape, dtype=np.float32: np.eye(*shape, dtype=dtype)
 
         # Pop all variables
-        init = kwargs.pop('mu', np.zeros((dim_z, ), dtype=np.float32))
+        init = kwargs.pop('mu', np.zeros((dim_l,), dtype=np.float32))
         self.mu = tf.get_variable('mu', initializer=init, trainable=False)  # state
 
-        init = kwargs.pop('Sigma', self.eye_init((dim_z, dim_z))).astype(np.float32)
+        init = kwargs.pop('Sigma', self.eye_init((dim_l, dim_l))).astype(np.float32)
         self.Sigma = tf.get_variable('Sigma', initializer=init, trainable=False)  # uncertainty covariance
 
-        init = kwargs.pop('y_0', np.zeros((dim_y,))).astype(np.float32)
-        self.y_0 = tf.get_variable('y_0', initializer=init)  # initial output
+        init = kwargs.pop('z_0', np.zeros((dim_z,))).astype(np.float32)
+        self.z_0 = tf.get_variable('z_0', initializer=init)  # initial output
 
-        init = kwargs.pop('A', self.eye_init((dim_z, dim_z)))
+        init = kwargs.pop('A', self.eye_init((dim_l, dim_l)))
         self.A = tf.get_variable('A', initializer=init)
 
-        init = kwargs.pop('B', self.eye_init((dim_z, dim_u))).astype(np.float32)
+        init = kwargs.pop('B', self.eye_init((dim_l, dim_u))).astype(np.float32)
         self.B = tf.get_variable('B', initializer=init)  # control transition matrix
 
-        init = kwargs.pop('Q', self.eye_init((dim_z, dim_z))).astype(np.float32)
+        init = kwargs.pop('Q', self.eye_init((dim_l, dim_l))).astype(np.float32)
         self.Q = tf.get_variable('Q', initializer=init, trainable=False)  # process uncertainty
 
-        init = kwargs.pop('C', self.eye_init((dim_y, dim_z))).astype(np.float32)
+        init = kwargs.pop('C', self.eye_init((dim_z, dim_l))).astype(np.float32)
         self.C = tf.get_variable('C', initializer=init)   # Measurement function
 
-        init = kwargs.pop('R', self.eye_init((dim_y, dim_y))).astype(np.float32)
+        init = kwargs.pop('R', self.eye_init((dim_z, dim_z))).astype(np.float32)
         self.R = tf.get_variable('R', initializer=init, trainable=False)   # state uncertainty
 
         self._alpha_sq = tf.constant(1., dtype=tf.float32) # fading memory control
         self.M = 0              # process-measurement cross correlation
 
         # identity matrix
-        self._I = tf.constant(self.eye_init((dim_z, dim_z)), name='I')
+        self._I = tf.constant(self.eye_init((dim_l, dim_l)), name='I')
 
         # Get variables that are possibly defined with tensors
-        self.y = kwargs.pop('y', None)
-        if self.y is None:
-            self.y = tf.placeholder(tf.float32, shape=(None, None, dim_y), name='y')
+        self.z = kwargs.pop('z', None)
+        if self.z is None:
+            self.z = tf.placeholder(tf.float32, shape=(None, None, dim_z), name='y')
 
         self.u = kwargs.pop('u', None)
         if self.u is None:
@@ -149,10 +149,10 @@ class KalmanFilter(object):
         """
 
         # To make sure we are not accidentally using the real outputs in the steps with missing values, set them to 0.
-        y_masked = tf.multiply(tf.expand_dims(self.mask, 2), self.y)
+        y_masked = tf.multiply(tf.expand_dims(self.mask, 2), self.z)
         inputs = tf.concat([y_masked, self.u, tf.expand_dims(self.mask, 2)], axis=2)
 
-        y_prev = tf.expand_dims(self.y_0, 0)  # (1, dim_y)
+        y_prev = tf.expand_dims(self.z_0, 0)  # (1, dim_y)
         y_prev = tf.tile(y_prev, (tf.shape(self.mu)[0], 1))
         alpha, state, u, buffer = self.alpha(y_prev, self.state, self.u[:, 0], init_buffer=True, reuse= reuse)
 
@@ -228,7 +228,7 @@ class KalmanFilter(object):
             epsilon = tf.zeros((z.get_shape()[0], n_steps, self.dim_z))
             delta = tf.zeros((z.get_shape()[0], n_steps, self.dim_y))
 
-        y_prev = tf.expand_dims(self.y_0, 0)  # (1, dim_y)
+        y_prev = tf.expand_dims(self.z_0, 0)  # (1, dim_y)
         y_prev = tf.tile(y_prev, (tf.shape(self.mu)[0], 1))  # (bs, dim_y)
         alpha, state, u, buffer = self.alpha(y_prev, self.state, self.u[:, 0], reuse=True, init_buffer=True)
 
@@ -305,7 +305,7 @@ class KalmanFilter(object):
         # Cz_t = tf.transpose(tf.matmul(self.C, tf.transpose(z_t_emission)))
         Cz_t = tf.reshape(tf.matmul(C, tf.expand_dims(z_smooth, 3)), [-1, self.dim_y])
 
-        y_t_resh = tf.reshape(self.y, [-1, self.dim_y])
+        y_t_resh = tf.reshape(self.z, [-1, self.dim_y])
         emiss_centered = y_t_resh - Cz_t
         mvn_emission = MultivariateNormalTriL(tf.zeros(self.dim_y), tf.cholesky(self.R))
         mask_flat = tf.reshape(self.mask, (-1, ))

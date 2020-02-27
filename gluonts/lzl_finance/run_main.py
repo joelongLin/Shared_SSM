@@ -27,12 +27,11 @@ cl.DEFINE_float('noise_transition', 0.08, 'Noise level for the process noise mat
 cl.DEFINE_float('init_kf_matrices', 0.05, 'initialize the B and C matrix')
 cl.DEFINE_float('init_cov', 20.0, 'Variance of the initial state')
 
-# shared environment network configuration
-cl.DEFINE_integer('num_layers' ,2,'num of lstm cell layers')
-cl.DEFINE_integer('num_cells' ,40 , 'hidden units size of lstm cell')
+# shared time_feature network configuration
+cl.DEFINE_integer('time_exact_layers' ,2,'num of lstm cell layers')
+cl.DEFINE_integer('time_exact_cells' ,40 , 'hidden units size of lstm cell')
 cl.DEFINE_string('cell_type' , 'lstm' , 'Type of recurrent cells to use (available: "lstm" or "gru"')
 cl.DEFINE_float('dropout_rate' , 0.1 , 'Dropout regularization parameter (default: 0.1)')
-cl.DEFINE_string('embedding_dimension' , '' , ' Dimension of the embeddings for categorical features')
 
 # dynamic parameter network configuration
 cl.DEFINE_boolean('alpha_rnn', True, 'Use LSTM RNN for alpha')

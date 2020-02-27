@@ -92,6 +92,7 @@ def mergeIterOut(
                             batch[_name] = np.concatenate((batch[_name], i_batch[_name]), axis=-1)
             except Exception:
                 flag = False
+                batch = None
                 break
             finally:
                 pass
@@ -255,6 +256,7 @@ class InferenceDataLoader_WithFuture(DataLoader_NoMX):
     `is_train = False`. 不能无限产生数据，且产生数据的模式 is_train=False
 
     Parameters
+
     ----------
     dataset
         The dataset from which to load data.

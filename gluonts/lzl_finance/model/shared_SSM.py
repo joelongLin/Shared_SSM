@@ -21,6 +21,7 @@ from gluonts.transform import (Chain ,
                                InstanceSplitter)
 from gluonts.transform.sampler import TestSplitSampler
 from gluonts.dataset.field_names import FieldName
+from .scaler import MeanScaler , NOPScaler
 from .data_loader import TrainDataLoader_OnlyPast ,InferenceDataLoader_WithFuture, mergeIterOut , stackIterOut
 # 将当前序列所在的编号(相当于告诉你当前的序列信息)变成一个embedding向量
 
@@ -37,12 +38,16 @@ class SharedSSM(object):
 
         # 开始搭建有可能Input 对应的 placeholder
         self.placeholders = {
-            "past_environment" : tf.placeholder(dtype=tf.float32, shape=[config.batch_size ,config.past_length,self.env_dim], name="past_environment"),
+            "past_environment": tf.placeholder(dtype=tf.float32,shape=[config.batch_size, config.past_length, self.env_dim],name="past_environment"),
+            "past_env_observed": tf.placeholder(dtype=tf.float32,shape=[config.batch_size, config.past_length, self.env_dim],name="past_env_observed"),
             "pred_environment" : tf.placeholder(dtype=tf.float32, shape=[config.batch_size ,config.pred_length,self.env_dim], name="pred_environment"),
+            "pred_env_observed" : tf.placeholder(dtype=tf.float32, shape=[config.batch_size ,config.pred_length,self.env_dim], name="pred_env_observed"),
             "past_time_feature": tf.placeholder(dtype=tf.float32,shape=[config.batch_size, config.past_length, self.time_dim],name="past_time_feature"),
             "pred_time_feature": tf.placeholder(dtype=tf.float32,shape=[config.batch_size, config.pred_length, self.time_dim],name="pred_time_feature"),
-            "past_target" : tf.placeholder(dtype=tf.float32, shape=[config.batch_size, self.ssm_num ,config.past_length,1], name="past_target"),
-            "pred_target" : tf.placeholder(dtype=tf.float32, shape=[config.batch_size, self.ssm_num ,config.pred_length,1], name="pred_target")
+            "past_target" : tf.placeholder(dtype=tf.float32, shape=[config.batch_size , config.past_length, self.ssm_num ,1], name="past_target"),
+            "past_target_observed" : tf.placeholder(dtype=tf.float32, shape=[config.batch_size , config.past_length, self.ssm_num ,1], name="past_target_observed"),
+            "pred_target" : tf.placeholder(dtype=tf.float32, shape=[config.batch_size ,config.pred_length, self.ssm_num ,1], name="pred_target"),
+            "pred_target_observed" : tf.placeholder(dtype=tf.float32, shape=[config.batch_size ,config.pred_length, self.ssm_num ,1], name="pred_target_observed")
         }
 
         # 放入可能出现的SSM参数
@@ -52,6 +57,8 @@ class SharedSSM(object):
                       for _ in range(config.K)])
         C = np.array([config.init_kf_matrices * np.random.randn(config.dim_a, config.dim_z).astype(np.float32)
                       for _ in range(config.K)])
+
+        # 使用 对角矩阵 作为 Noise
 
     def load_original_data(self):
         name_prefix = 'data_process/processed_data/{}_{}_{}_{}.pkl'
@@ -134,21 +141,6 @@ class SharedSSM(object):
                 output_field=FieldName.FEAT_TIME,
                 input_fields=[FieldName.FEAT_TIME, FieldName.FEAT_AGE]
             ),
-            # CanonicalInstanceSplitter(
-            #     target_field=FieldName.TARGET,
-            #     is_pad_field=FieldName.IS_PAD,
-            #     start_field=FieldName.START,
-            #     forecast_start_field=FieldName.FORECAST_START,
-            #     instance_sampler=TestSplitSampler(),
-            #     time_series_fields=[
-            #         FieldName.FEAT_TIME,
-            #         FieldName.OBSERVED_VALUES,
-            #     ],
-            #     allow_target_padding=True,
-            #     instance_length=self.config.past_length,
-            #     use_prediction_features=True,
-            #     prediction_length=self.config.pred_length,
-            # ),
             InstanceSplitter(
                 target_field=FieldName.TARGET,
                 is_pad_field=FieldName.IS_PAD,
@@ -196,7 +188,7 @@ class SharedSSM(object):
                                              include_future=True)
         self.target_train_loader = stackIterOut(target_train_iters,
                                                 fields=[FieldName.OBSERVED_VALUES , FieldName.FEAT_TIME , FieldName.TARGET],
-                                                dim=1,
+                                                dim=2,
                                                 include_future=False)
         self.env_test_loader = mergeIterOut(env_test_iters,
                                             fields=[FieldName.OBSERVED_VALUES , FieldName.FEAT_TIME , FieldName.TARGET],
@@ -204,16 +196,17 @@ class SharedSSM(object):
         self.target_test_loader = stackIterOut(target_test_iters,
                                                fields=[FieldName.OBSERVED_VALUES, FieldName.FEAT_TIME,
                                                         FieldName.TARGET],
-                                               dim=1,
+                                               dim=2,
                                                include_future=True)
         # 做training 时
         print('\n----- training数据集 ------')
         for batch_no , batch_data in enumerate(self.target_train_loader , start=1):
             if batch_data != None :
-                print('第{}个batch的内容 past_target: {}  , past_time : {} ,'.format(
+                print('第{}个batch的内容 past_target: {}  , past_time : {} , past_observed :{} ,'.format(
                     batch_no,
                     batch_data['past_target'].shape ,
                     batch_data['past_time_feat'].shape,
+                    batch_data['past_%s' % (FieldName.OBSERVED_VALUES)].shape
                 ))
             else:
                 print('第' , batch_no , '内容为空')
@@ -221,48 +214,34 @@ class SharedSSM(object):
         print('\n----- inference数据集 ------')
         for batch_no ,batch_data in enumerate(self.target_test_loader , start=1):
             if batch_data != None:
-                print('第{}个batch的内容 past_target: {} , future_target: {} , past_time : {} , future_time : {}'.format(
+                print('第{}个batch的内容 past_target: {} , future_target: {} '
+                      ', past_time : {} , future_time : {}'
+                      ', past_observed : {} , future_observed : {}'.format(
                     batch_no,
                     batch_data['past_target'].shape, batch_data['future_target'].shape,
-                    batch_data['past_time_feat'].shape, batch_data['future_time_feat'].shape
+                    batch_data['past_time_feat'].shape, batch_data['future_time_feat'].shape,
+                    batch_data['past_%s' % (FieldName.OBSERVED_VALUES)].shape,
+                    batch_data['future_%s' % (FieldName.OBSERVED_VALUES)].shape
                 ))
             else:
                 print('第' , batch_no ,'内容为空')
         exit()
+
     def build_module(self):
-        with tf.variable_scope('deepstate', initializer=tf.contrib.layers.xavier_initializer() , reuse=tf.AUTO_REUSE):
-            self.prior_mean_model = tf.layers.Dense(units=self.issm.latent_dim(),dtype=tf.float32 ,name='prior_mean')
-
-            self.prior_cov_diag_model = tf.layers.Dense(
-                units=self.issm.latent_dim(),
-                dtype=tf.float32,
-                activation=tf.keras.activations.sigmoid,  # TODO: puot explicit upper bound
-                name='prior_cov'
-            )
-
-            self.lds_proj = LDSArgsProj(output_dim=self.issm.output_dim())
-
-            self.lstm = []
-            for k in range(self.num_layers):
-                cell = tf.nn.rnn_cell.LSTMCell(num_units=self.num_cells)
+        with tf.variable_scope('time_feature_exactor', initializer=tf.contrib.layers.xavier_initializer() , reuse=tf.AUTO_REUSE):
+            self.time_feature_exactor = []
+            for k in range(self.config.time_exact_layers):
+                cell = tf.nn.rnn_cell.LSTMCell(num_units=self.config.time_exact_cells)
                 cell = tf.nn.rnn_cell.ResidualWrapper(cell) if k > 0 else cell
                 cell = (
                     tf.nn.rnn_cell.DropoutWrapper(cell,state_keep_prob=1.0-self.dropout_rate)
                     if self.dropout_rate > 0.0
                     else cell
                 )
-                self.lstm.append(cell)
+                self.time_feature_exactor.append(cell)
 
-            self.lstm = tf.nn.rnn_cell.MultiRNNCell(self.lstm)
+            self.time_feature_exactor = tf.nn.rnn_cell.MultiRNNCell(self.time_feature_exactor)
 
-            self.embedder = FeatureEmbedder(
-                # cardinalities=cardinality,
-                cardinalities=self.cardinality,
-                embedding_dims=self.embedding_dimension,
-            )
-
-            # print(self.embedder.)
-            # exit()
 
             if self.scaling:
                 self.scaler = MeanScaler(keepdims=False)
@@ -270,188 +249,12 @@ class SharedSSM(object):
                 self.scaler = NOPScaler(keepdims=False)
 
             return self
-
-    # 将在 build_forward 里面进行调用
-    def compute_lds(
-        self,
-        feat_static_cat: Tensor,
-        seasonal_indicators: Tensor,
-        time_feat: Tensor,
-        length: int,
-        prior_mean = None, # can be None
-        prior_cov = None, # can be None
-        lstm_begin_state = None, # can be None
-    ):
-        # embed categorical features and expand along time axis
-
-        embedded_cat = self.embedder.build_forward(feat_static_cat)
-
-        repeated_static_features = tf.tile(
-            tf.expand_dims(embedded_cat, axis=1),
-            multiples=[1,length,1]
-        ) #(bs , seq_length , embedding)
-
-
-        # construct big features tensor (context)
-        features = tf.concat([time_feat, repeated_static_features], axis=2)#(bs,seq_length , time_feat + embedding)
-
-        # output 相当于使用 lstm 产生 SSM 的参数
-        output , lstm_final_state = tf.nn.dynamic_rnn(
-            cell = self.lstm,
-            inputs = features,
-            initial_state = lstm_begin_state,
-            dtype = tf.float32
-        ) #(bs,seq_length ,hidden_dim)
-
-
-        if prior_mean is None:
-            prior_input = tf.squeeze(
-                tf.slice(output, begin=[0, 0, 0], size=[-1, 1, -1]),
-                axis=1
-            ) #选用lstm 第一个时间步的结果
-
-            prior_mean = self.prior_mean_model(prior_input)#(bs,latent_dim)
-            prior_cov_diag = self.prior_cov_diag_model(prior_input)
-            prior_cov = make_nd_diag( prior_cov_diag, self.issm.latent_dim())#(bs ,latent_dim ,latent_dim)
-
-
-        emission_coeff, transition_coeff, innovation_coeff = self.issm.get_issm_coeff(
-            seasonal_indicators
-        )
-
-        # emission_coeff（bs , seq_length , output_dim , latent_dim）
-        # transition_coeff(bs, seq_length, latent_dim ,latent_dim)
-        # innovation_coeff(bs ,seq_length ,latent_dim)
-
-
-        noise_std, innovation, residuals = self.lds_proj.build_forward(output)
-        # noise_std（bs , seq_length , 1 ）
-        # innovation(bs, seq_length,  1 )
-        # residuals(bs ,seq_length ,output_dim)
-
-
-
-        lds = LDS(
-            emission_coeff=emission_coeff,
-            transition_coeff=transition_coeff,
-            innovation_coeff=tf.math.multiply(innovation, innovation_coeff),
-            noise_std=noise_std,
-            residuals=residuals,
-            prior_mean=prior_mean,
-            prior_cov=prior_cov,
-            latent_dim=self.issm.latent_dim(),
-            output_dim=self.issm.output_dim(),
-            seq_length=length,
-        )
-
-        return lds, lstm_final_state
-
-
+        pass
     def build_train_forward(self):
-        lds, _ = self.compute_lds(
-            feat_static_cat=self.feat_static_cat,
-            seasonal_indicators=tf.slice(
-                self.past_seasonal_indicators
-                ,begin=[0,0,0],size=[-1,-1,-1]
-            ),
-            time_feat=tf.slice(self.past_time_feat
-                , begin=[0, 0, 0], size=[-1, -1, -1]
-            ),
-            length=self.past_length,
-        )
-
-        _, scale = self.scaler.build_forward(data=self.past_target
-                               , observed_indicator=self.past_observed_values)
-        #(bs,output_dim)
-
-
-        observed_context = tf.slice(
-            self.past_observed_values,
-             begin=[0,0,0], size=[-1,-1,-1]
-        )#(bs,seq_length , 1)
-
-
-        ll, _, _ = lds.log_prob(
-            x=tf.slice(
-                self.past_target,
-                begin=[0,0,0], size=[-1,-1,-1]
-            ),#(bs,seq_length ,time_feat)
-            observed=tf.math.reduce_min(observed_context ,axis=-1), #(bs ,seq_length)
-            scale=scale,
-        )#(bs,seq_length)
-
-
-        self.train_result = weighted_average(
-            x=-ll, axis=1, weights= tf.math.reduce_min(observed_context, axis=-1)
-        )#(bs,)
-
-        self.train_result_mean = tf.math.reduce_mean(self.train_result)
-        optimizer = tf.train.AdamOptimizer(learning_rate=self.config.learning_rate)
-        gvs = optimizer.compute_gradients(self.train_result_mean)
-        capped_gvs = [(tf.clip_by_value(grad, -1., 10.), var) for grad, var in gvs]
-        self.train_op = optimizer.apply_gradients(capped_gvs)
-        # tf.squeeze(observed_context, axis=-1)
-
-        return self
+        pass
 
     def build_predict_forward(self):
-        lds, lstm_state = self.compute_lds(
-            feat_static_cat=self.feat_static_cat,
-            seasonal_indicators=tf.slice(
-                self.past_seasonal_indicators
-                ,begin=[0,0,0],size=[-1,-1,-1]
-            ),
-            time_feat=tf.slice(self.past_time_feat
-                , begin=[0, 0, 0], size=[-1, -1, -1]
-            ),
-            length=self.past_length,
-        )
-
-
-
-        _, scale = self.scaler.build_forward(self.past_target, self.past_observed_values)
-
-        observed_context = tf.slice(
-            self.past_observed_values,
-             begin=[0,0,0], size=[-1,-1,-1]
-        )#(bs,seq_length , 1)
-
-        _, final_mean, final_cov = lds.log_prob(
-            x=tf.slice(
-                self.past_target,
-                begin=[0, 0, 0], size=[-1, -1, -1]
-            ),  # (bs,seq_length ,time_feat)
-            observed=tf.math.reduce_min(observed_context, axis=-1),  # (bs ,seq_length)
-            scale=scale,
-        )
-
-        # print('lstm final state shape : ',
-        #       [{'c_shape': state.c.shape, 'h_shape': state.h.shape} for state in lstm_state])
-
-        lds_prediction, _ = self.compute_lds(
-            feat_static_cat=self.feat_static_cat,
-            seasonal_indicators=self.future_seasonal_indicators,
-            time_feat=self.future_time_feat,
-            length=self.prediction_length,
-            lstm_begin_state=lstm_state,
-            prior_mean=final_mean,
-            prior_cov=final_cov,
-        )
-
-        samples = lds_prediction.sample(
-            num_samples=self.num_sample_paths, scale=scale
-        )# (num_samples, batch_size, seq_length, obs_dim)
-
-
-        # (batch_size, num_samples, prediction_length, target_dim)
-        #  squeeze last axis in the univariate case (batch_size, num_samples, prediction_length)
-        if self.univariate:
-            self.predict_result = tf.squeeze(tf.transpose(samples , [1, 0, 2, 3]),axis=3)
-        else:
-            self.predict_result = tf.transpose(samples , [1,0,2,3])
-
-        return self
-
+        pass
 
     def initialize_variables(self):
         """ Initialize variables or load saved model
@@ -615,28 +418,6 @@ class SharedSSM(object):
 
 
     def evaluate(self, forecast=None):
-        ground_truth_loader = GroundTruthLoader(config=self.config)
-        ground_truth = ground_truth_loader.get_ground_truth()
-        if forecast is None:
-            forecast = self.all_forecast_result
-        finance_eval = evaluate_up_down(ground_truth ,forecast)
-        if hasattr(self , 'writer_path'):
-            eval_path = os.path.join(self.writer_path, "metrics.json")
-        else:
-            eval_path = os.path.join(self.config.reload_model , "metrics.json")
-        with open(eval_path, 'w') as f:
-            json.dump(finance_eval, f, indent=4)
-        # plot_length = self.config.past_length + self.config.pred_length
-        # for i in range(321):#对于electricity来说，总共由321列
-        #     plot_prob_forecasts(ground_truth[i] , forecast[i] ,self.config.dataset,i,plot_length)
-        #
-        # exit()
-        # evaluator = Evaluator(quantiles=[0.1, 0.5, 0.9])
-        # agg_metrics, item_metrics = evaluator(iter(ground_truth)
-        #                                       , iter(forecast)
-        #                                       , num_series=len(ground_truth_loader.ds.test))
-        #
-        # print(json.dumps(agg_metrics, indent=4))
         pass
 
 
