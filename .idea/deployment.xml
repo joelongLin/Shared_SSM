@@ -16,6 +16,13 @@
           </mappings>
         </serverdata>
       </paths>
+      <paths name="lzl@10.21.25.238:22">
+        <serverdata>
+          <mappings>
+            <mapping local="$PROJECT_DIR$" web="/" />
+          </mappings>
+        </serverdata>
+      </paths>
       <paths name="lzl@10.21.25.238:22 (1)">
         <serverdata>
           <mappings>

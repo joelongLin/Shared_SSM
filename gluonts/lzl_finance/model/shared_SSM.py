@@ -1,6 +1,5 @@
 import logging
 import tensorflow as tf
-from tensorflow import Tensor
 import numpy as np
 import pickle
 import time
@@ -22,6 +21,7 @@ from gluonts.transform import (Chain ,
 from gluonts.transform.sampler import TestSplitSampler
 from gluonts.dataset.field_names import FieldName
 from .scaler import MeanScaler , NOPScaler
+from .filter import MultiKalmanFilter
 from .data_loader import TrainDataLoader_OnlyPast ,InferenceDataLoader_WithFuture, mergeIterOut , stackIterOut
 # 将当前序列所在的编号(相当于告诉你当前的序列信息)变成一个embedding向量
 
@@ -44,21 +44,12 @@ class SharedSSM(object):
             "pred_env_observed" : tf.placeholder(dtype=tf.float32, shape=[config.batch_size ,config.pred_length,self.env_dim], name="pred_env_observed"),
             "past_time_feature": tf.placeholder(dtype=tf.float32,shape=[config.batch_size, config.past_length, self.time_dim],name="past_time_feature"),
             "pred_time_feature": tf.placeholder(dtype=tf.float32,shape=[config.batch_size, config.pred_length, self.time_dim],name="pred_time_feature"),
-            "past_target" : tf.placeholder(dtype=tf.float32, shape=[config.batch_size , config.past_length, self.ssm_num ,1], name="past_target"),
-            "past_target_observed" : tf.placeholder(dtype=tf.float32, shape=[config.batch_size , config.past_length, self.ssm_num ,1], name="past_target_observed"),
-            "pred_target" : tf.placeholder(dtype=tf.float32, shape=[config.batch_size ,config.pred_length, self.ssm_num ,1], name="pred_target"),
-            "pred_target_observed" : tf.placeholder(dtype=tf.float32, shape=[config.batch_size ,config.pred_length, self.ssm_num ,1], name="pred_target_observed")
+            "past_target" : tf.placeholder(dtype=tf.float32, shape=[self.ssm_num ,config.batch_size , config.past_length, 1], name="past_target"),
+            "past_target_observed" : tf.placeholder(dtype=tf.float32, shape=[self.ssm_num ,config.batch_size , config.past_length, 1], name="past_target_observed"),
+            "pred_target" : tf.placeholder(dtype=tf.float32, shape=[self.ssm_num ,config.batch_size ,config.pred_length, 1], name="pred_target"),
+            "pred_target_observed" : tf.placeholder(dtype=tf.float32, shape=[self.ssm_num ,config.batch_size ,config.pred_length, 1], name="pred_target_observed")
         }
 
-        # 放入可能出现的SSM参数
-        #  A(transition)是对角矩阵表示在转移的时候尽可能保持不变, B(control) 和 C(emission) 从高斯分布中随机进行采样
-        A = np.array([np.eye(config.dim_z).astype(np.float32) for _ in range(config.K)])  # (K, dim_z , dim_z)
-        B = np.array([config.init_kf_matrices * np.random.randn(config.dim_z, config.dim_u).astype(np.float32)
-                      for _ in range(config.K)])
-        C = np.array([config.init_kf_matrices * np.random.randn(config.dim_a, config.dim_z).astype(np.float32)
-                      for _ in range(config.K)])
-
-        # 使用 对角矩阵 作为 Noise
 
     def load_original_data(self):
         name_prefix = 'data_process/processed_data/{}_{}_{}_{}.pkl'
@@ -123,7 +114,7 @@ class SharedSSM(object):
                 target_field = FieldName.TARGET,
                 output_field = FieldName.OBSERVED_VALUES,
             ),
-            # TODO: 这里的 AddTimeFeatures，面对的ts, 维度应该为(features,T)
+            # 这里的 AddTimeFeatures，面对的ts, 维度应该为(features,T)
             AddTimeFeatures(
                 start_field=FieldName.START,
                 target_field=FieldName.TARGET,
@@ -188,7 +179,7 @@ class SharedSSM(object):
                                              include_future=True)
         self.target_train_loader = stackIterOut(target_train_iters,
                                                 fields=[FieldName.OBSERVED_VALUES , FieldName.FEAT_TIME , FieldName.TARGET],
-                                                dim=2,
+                                                dim=0,
                                                 include_future=False)
         self.env_test_loader = mergeIterOut(env_test_iters,
                                             fields=[FieldName.OBSERVED_VALUES , FieldName.FEAT_TIME , FieldName.TARGET],
@@ -196,61 +187,195 @@ class SharedSSM(object):
         self.target_test_loader = stackIterOut(target_test_iters,
                                                fields=[FieldName.OBSERVED_VALUES, FieldName.FEAT_TIME,
                                                         FieldName.TARGET],
-                                               dim=2,
+                                               dim=0,
                                                include_future=True)
-        # 做training 时
-        print('\n----- training数据集 ------')
-        for batch_no , batch_data in enumerate(self.target_train_loader , start=1):
-            if batch_data != None :
-                print('第{}个batch的内容 past_target: {}  , past_time : {} , past_observed :{} ,'.format(
-                    batch_no,
-                    batch_data['past_target'].shape ,
-                    batch_data['past_time_feat'].shape,
-                    batch_data['past_%s' % (FieldName.OBSERVED_VALUES)].shape
-                ))
-            else:
-                print('第' , batch_no , '内容为空')
-        # 做inference 时
-        print('\n----- inference数据集 ------')
-        for batch_no ,batch_data in enumerate(self.target_test_loader , start=1):
-            if batch_data != None:
-                print('第{}个batch的内容 past_target: {} , future_target: {} '
-                      ', past_time : {} , future_time : {}'
-                      ', past_observed : {} , future_observed : {}'.format(
-                    batch_no,
-                    batch_data['past_target'].shape, batch_data['future_target'].shape,
-                    batch_data['past_time_feat'].shape, batch_data['future_time_feat'].shape,
-                    batch_data['past_%s' % (FieldName.OBSERVED_VALUES)].shape,
-                    batch_data['future_%s' % (FieldName.OBSERVED_VALUES)].shape
-                ))
-            else:
-                print('第' , batch_no ,'内容为空')
-        exit()
+
+
 
     def build_module(self):
-        with tf.variable_scope('time_feature_exactor', initializer=tf.contrib.layers.xavier_initializer() , reuse=tf.AUTO_REUSE):
-            self.time_feature_exactor = []
+        # 放入可能出现的SSM参数
+        #  A(transition)是对角矩阵表示在转移的时候尽可能保持不变, B(control) 和 C(emission) 从高斯分布中随机进行采样
+        A = np.array([np.eye(self.config.dim_l).astype(np.float32) for _ in range(self.config.K)])  # (K, dim_z , dim_z)
+        A = np.tile(A, reps=(self.ssm_num, 1, 1, 1)) #(ssm_num , K , dim_z, dim_z)
+
+        B = np.array([self.config.init_kf_matrices * np.random.randn(self.config.dim_l, self.config.dim_u).astype(np.float32)
+                      for _ in range(self.config.K)])
+        B = np.tile(B, reps=(self.ssm_num, 1, 1, 1))
+
+        C = np.array([self.config.init_kf_matrices * np.random.randn(self.config.dim_z, self.config.dim_l).astype(np.float32)
+                      for _ in range(self.config.K)])
+        C = np.tile(C, reps=(self.ssm_num, 1, 1, 1))
+
+        # p(l_1) , SSM 隐空间的的的初始状态, mu , Sigma 分别代表 隐状态的 均值和方差
+        mu = np.zeros((self.config.batch_size, self.config.dim_l), dtype=np.float32)
+        mu = np.tile(mu, reps=(self.ssm_num, 1, 1)) #(ssm_num , bs , dim_l)
+        Sigma = np.tile(self.config.init_cov * np.eye(self.config.dim_l, dtype=np.float32), (self.config.batch_size, 1, 1))
+        Sigma = np.tile(Sigma, reps=(self.ssm_num, 1, 1, 1)) #(ssm_num , bs , dim_l , dim_l)
+
+        # Initial variable z_0 , stands for the initial of the pseudo observation
+        z_0 = np.zeros((self.config.dim_z,), dtype=np.float32)
+        z_0 = np.tile(z_0, reps=(self.ssm_num, 1))
+
+        self.init_vars = dict(A=A, B=B, C=C, mu=mu, Sigma=Sigma, z_0=z_0)
+        if self.config.scaling:
+            self.scaler = MeanScaler(keepdims=False)
+        else:
+            self.scaler = NOPScaler(keepdims=False)
+
+        with tf.variable_scope('time_feature_exactor', initializer=tf.contrib.layers.xavier_initializer() ) :
+            self.time_feature_lstm = []
             for k in range(self.config.time_exact_layers):
-                cell = tf.nn.rnn_cell.LSTMCell(num_units=self.config.time_exact_cells)
+                cell = tf.nn.rnn_cell.LSTMCell(num_units=self.config.time_exact_cells , name='time_lstm_cell_{}'.format(k))
                 cell = tf.nn.rnn_cell.ResidualWrapper(cell) if k > 0 else cell
                 cell = (
-                    tf.nn.rnn_cell.DropoutWrapper(cell,state_keep_prob=1.0-self.dropout_rate)
-                    if self.dropout_rate > 0.0
+                    tf.nn.rnn_cell.DropoutWrapper(cell,state_keep_prob=1.0-self.config.dropout_rate)
+                    if self.config.dropout_rate > 0.0
                     else cell
                 )
-                self.time_feature_exactor.append(cell)
+                self.time_feature_lstm.append(cell)
 
-            self.time_feature_exactor = tf.nn.rnn_cell.MultiRNNCell(self.time_feature_exactor)
+            self.time_feature_lstm = tf.nn.rnn_cell.MultiRNNCell(self.time_feature_lstm)
+            # TODO: 关于 noise 的大小是否要 限定在 0 和 1 之间，也值得讨论
+            self.noise_emission_model = tf.layers.Dense(units=1, dtype=tf.float32, name='noise_emission')
+            self.noise_transition_model = tf.layers.Dense(units=1 , dtype=tf.float32 , name='noise_transition')
+
+        with tf.variable_scope('env_exactor', initializer=tf.contrib.layers.xavier_initializer() ) :
+            self.env_lstm = []
+            for k in range(self.config.env_exact_layers):
+                cell = tf.nn.rnn_cell.LSTMCell(num_units=self.config.env_exact_cells,name='env_lstm_cell_{}'.format(k))
+                cell = tf.nn.rnn_cell.ResidualWrapper(cell) if k > 0 else cell
+                cell = (
+                    tf.nn.rnn_cell.DropoutWrapper(cell, state_keep_prob=1.0 - self.config.dropout_rate)
+                    if self.config.dropout_rate > 0.0
+                    else cell
+                )
+                self.env_lstm.append(cell)
+
+            self.env_lstm = tf.nn.rnn_cell.MultiRNNCell(self.env_lstm)
+            # 需要根据ssm的数量决定 dense
+            self.u_model = [
+                tf.layers.Dense(units=self.config.dim_u , dtype=tf.float32 , name='u_{}_model'.format(i))
+                for i in range(self.ssm_num)
+            ]
 
 
-            if self.scaling:
-                self.scaler = MeanScaler(keepdims=False)
-            else:
-                self.scaler = NOPScaler(keepdims=False)
+        with tf.variable_scope('alpha', initializer=tf.contrib.layers.xavier_initializer()) :
+            if self.config.alpha_rnn == True:
+                self.alpha_model = tf.nn.rnn_cell.LSTMCell(num_units=self.config.alpha_units ,name='alpha_model')
+                self.alpha_dense = tf.layers.Dense(units=self.config.K ,
+                                                   activation=tf.nn.softmax,
+                                                   dtype=tf.float32 ,
+                                                   name='alpha_dense')
 
-            return self
-        pass
+        return self
+
+    def alpha(self, inputs, state=None, u=None,  reuse=None, name='alpha'):
+        """
+        是为了给SSM产生转移矩阵的混合系数
+        Args:
+            inputs: tensor to condition mixing vector on (ssm_num , bs , 1)
+            state: previous state of RNN network
+            u: pass-through variable if u is given
+            reuse: `True` or `None`; if `True`, we go into reuse mode for this scope as
+                    well as all sub-scopes; if `None`, we just inherit the parent scope reuse.
+            name: name of the scope
+
+        Returns:
+            alpha: mixing vector of dimension (batch size, K)
+            state: new state
+            u: either inferred u from model or pass-through
+        """
+
+        # If K == 1, return inputs
+        if self.config.K == 1:
+            return tf.ones([self.ssm_num,self.config.batch_size, self.config.K]), state, u
+
+        # Initial state for the alpha RNN
+        with tf.variable_scope(name, reuse=reuse):
+            # 只执行一步
+            # reshape 之后确实可以恢复回来
+            inputs = tf.reshape(inputs , (-1,1) ) #(bs*ssm_num ,1)
+            output, state = self.alpha_model(inputs, state) #(bs*ssm_num , cell_units) ,(h,c)
+            # Get Alpha as the first part of the output
+            alpha = self.alpha_dense(output[:, :self.config.alpha_units])
+            alpha = tf.reshape(alpha , (self.ssm_num,self.config.batch_size,self.config.K))
+        return alpha, state, u
+
     def build_train_forward(self):
+        env_norm , env_scale  = self.scaler.build_forward(
+            data = self.placeholders['past_environment'],
+            observed_indicator = self.placeholders['past_env_observed']
+        )#(bs ,seq , env_dim) , (bs , env_dim)
+
+        target_norm , target_scale , = self.scaler.build_forward(
+            data = self.placeholders['past_target'],
+            observed_indicator = self.placeholders['past_target_observed']
+        )#(bs , seq , ssm_num , 1) , (bs , ssm_num , 1)
+
+        # 对 past_time_feature 进行处理
+        time_rnn_out, _ = tf.nn.dynamic_rnn(
+            cell=self.time_feature_lstm,
+            inputs = self.placeholders['past_time_feature'],
+            initial_state=None,
+            dtype=tf.float32
+        )  # (bs,seq_length ,hidden_dim)
+        eyes = tf.eye(self.config.dim_l)
+        Q = self.noise_transition_model(time_rnn_out) #(bs, seq , 1)
+        Q = tf.multiply(eyes , tf.expand_dims(Q , axis=-1))
+        R = self.noise_emission_model(time_rnn_out) #(bs, seq , 1)
+        R = tf.expand_dims(R , axis=-1)
+
+        print('Q shape : {} , R shape : {}'.format(Q.shape , R.shape))
+
+        # 对 environment 进行处理
+        env_rnn_out, _ = tf.nn.dynamic_rnn(
+            cell=self.env_lstm,
+            inputs=env_norm,
+            initial_state=None,
+            dtype=tf.float32
+        )  # (bs,seq_length ,hidden_dim)
+        u = tf.stack(
+            [model(env_rnn_out)
+            for model in self.u_model],
+            axis = 0
+        ) #(bs ,seq , ssm_num , dim_u)
+        print('u: ' ,  u)
+
+        # 为 Kalman Filter 提供LSTM的初始状态
+        dummy_lstm = tf.nn.rnn_cell.LSTMCell(self.config.alpha_units)
+        alpha_lstm_init = dummy_lstm.zero_state(self.config.batch_size * self.ssm_num, tf.float32)
+
+        self.kf = MultiKalmanFilter(dim_l=self.config.dim_l,
+                                    dim_z=self.config.dim_z,
+                                    dim_u=self.config.dim_u,
+                                    dim_k=self.config.K,
+                                    A=self.init_vars['A'],  # state transition function
+                                    B=self.init_vars['B'],  # control matrix
+                                    C=self.init_vars['C'],  # Measurement function
+                                    R=R,  # measurement noise
+                                    Q=Q,  # process noise
+                                    z=target_norm,  # output
+                                    z_scale = target_scale , # scale of output
+                                    u = u,
+                                    # mask 这里面会多一维度 (bs,seq , ssm_num ,1)
+                                    mask=self.placeholders['past_target_observed'],
+                                    mu=self.init_vars['mu'],
+                                    Sigma=self.init_vars['Sigma'],
+                                    z_0=self.init_vars['z_0'],
+                                    alpha=self.alpha,
+                                    state = alpha_lstm_init
+                                    )
+        smooth, A, B, C, alpha_plot = self.kf.smooth()
+        filter, A_filter, B_filter, C_filter, _ = self.kf.filter()
+
+        # TODO: 完成对 elbo 的书写
+        #  或者deepstate LDS那样，在执行 filter算法时
+        result = self.kf.get_elbo(
+            backward_states=smooth,
+            A= A,
+            B=B,
+            C=C
+        )
         pass
 
     def build_predict_forward(self):
@@ -276,6 +401,33 @@ class SharedSSM(object):
         return self
 
     def train(self):
+        # 做training 时
+        print('\n----- training数据集 ------')
+        for batch_no, batch_data in enumerate(self.target_train_loader, start=1):
+            if batch_data != None:
+                print('第{}个batch的内容 past_target: {}  , past_time : {} , past_observed :{} ,'.format(
+                    batch_no,
+                    batch_data['past_target'].shape,
+                    batch_data['past_time_feat'].shape,
+                    batch_data['past_%s' % (FieldName.OBSERVED_VALUES)].shape
+                ))
+            else:
+                print('第', batch_no, '内容为空')
+        # 做inference 时
+        print('\n----- inference数据集 ------')
+        for batch_no, batch_data in enumerate(self.target_test_loader, start=1):
+            if batch_data != None:
+                print('第{}个batch的内容 past_target: {} , future_target: {} '
+                      ', past_time : {} , future_time : {}'
+                      ', past_observed : {} , future_observed : {}'.format(
+                    batch_no,
+                    batch_data['past_target'].shape, batch_data['future_target'].shape,
+                    batch_data['past_time_feat'].shape, batch_data['future_time_feat'].shape,
+                    batch_data['past_%s' % (FieldName.OBSERVED_VALUES)].shape,
+                    batch_data['future_%s' % (FieldName.OBSERVED_VALUES)].shape
+                ))
+            else:
+                print('第', batch_no, '内容为空')
         #如果导入已经有的信息,不进行训练
         if self.config.reload_model != '':
             return
