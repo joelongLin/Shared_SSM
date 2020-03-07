@@ -338,7 +338,7 @@ class SharedSSM(object):
             [model(env_rnn_out)
             for model in self.u_model],
             axis = 0
-        ) #(bs ,seq , ssm_num , dim_u)
+        ) #(ssm_num , bs ,seq , dim_u)
         print('u: ' ,  u)
 
         # 为 Kalman Filter 提供LSTM的初始状态

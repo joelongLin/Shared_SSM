@@ -243,7 +243,7 @@ class MultiKalmanFilter(object):
             epsilon = tf.zeros((l.get_shape()[0], n_steps, self.dim_l))
             delta = tf.zeros((l.get_shape()[0], n_steps, self.dim_z))
 
-        z_prev = tf.expand_dims(self.z_0, 0)  # (1, dim_z_ob)
+        z_prev = tf.expand_dims(self.z_0, 0)  # (1, dim_z)
         z_prev = tf.tile(z_prev, (tf.shape(self.mu)[0], 1))  # (bs, dim_z_ob)
         alpha, state, u = self.alpha_fn(z_prev, self.state, self.u[:, 0], reuse=True)
 
@@ -285,53 +285,59 @@ class MultiKalmanFilter(object):
         return tf.stack(z_samples, 1), tf.stack(l_samples, 1), tf.stack(alpha_samples, 1)
 
     def get_elbo(self, backward_states, A, B, C):
+        '''
+        :param backward_states: mu_t|T , Sigma_t|T  (ssm_num, bs , seq , dim_l)
+        :param A: (ssm_num , bs , seq , dim_l , dim_l)
+        :param B: (ssm_num , bs , seq , dim_l , dim_u)
+        :param C: (ssm_num , bs , seq , dim_z , dim_l)
+        :return:
+        '''
 
         mu_smooth = backward_states[0]  #(ssm_num ,bs ,seq , dim_l)
         Sigma_smooth = backward_states[1]  #(ssm_num , bs , seq , dim_l, dim_l)
 
         # 从 smooth 之后的分布进行采样
         mvn_smooth = tfp.distributions.MultivariateNormalTriL(mu_smooth, tf.cholesky(Sigma_smooth))
-        z_smooth = mvn_smooth.sample() #(ssm_num ,bs , seq , dim_l)
+        l_smooth = mvn_smooth.sample() #(ssm_num ,bs , seq , dim_l)
 
         ## Transition distribution \prod_{t=2}^T p(z_t|z_{t-1}, u_{t})
-        # We need to evaluate N(z_t; Az_(t-1) + Bu_t, Q), where Q is the same for all the elements
-        Az_tm1 = tf.reshape(tf.matmul(A[:, :-1], tf.expand_dims(z_smooth[:, :-1], 3)), [-1, self.dim_l])
+        # We need to evaluate N(z_t; Az_(t-1) + Bu_t, Q)
+        Az_tm1 = tf.reshape(tf.matmul(A[:,:, :-1], tf.expand_dims(l_smooth[:,:, :-1], -1)), [l_smooth.shape[0],-1, self.dim_l])#(ssm_num ,bs*(seq-1) , dim_l)
 
         # Remove the first input as our prior over z_1 does not depend on it
-        # u_t_resh = tf.reshape(u, [-1, self.dim_u])
-        # Bu_t = tf.transpose(tf.matmul(self.B, tf.transpose(u_t_resh)))
-        Bu_t = tf.reshape(tf.matmul(B[:, :-1], tf.expand_dims(self.u[:, 1:], 3)), [-1, self.dim_l])
-        mu_transition = Az_tm1 + Bu_t
-        z_t_transition = tf.reshape(z_smooth[:, 1:, :], [-1, self.dim_l])
+        Bu_t = tf.reshape(tf.matmul(B[:,:, :-1], tf.expand_dims(self.u[:,:, 1:], -1)), [l_smooth.shape[0],-1, self.dim_l])
+        mu_transition = Az_tm1 + Bu_t #(ssm_num ,bs*(seq-1) , dim_l)
+        l_t_transition = tf.reshape(l_smooth[:,:, 1:], [l_smooth.shape[0],-1, self.dim_l]) #(ssm_num ,bs*(seq-1) , dim_l)
 
-        # MultivariateNormalTriL supports broadcasting only for the inputs, not for the covariance
         # To exploit this we then write N(z_t; Az_tm1 + Bu_t, Q) as N(z_t - Az_tm1 - Bu_t; 0, Q)
-        trans_centered = z_t_transition - mu_transition
-        mvn_transition = tfp.distributions.MultivariateNormalTriL(tf.zeros(self.dim_l), tf.cholesky(self.Q))
-        log_prob_transition = mvn_transition.log_prob(trans_centered)
+        #因为tfp提供的API, 在这里需要对 mvn_transition 里面的的 loc 和 scale 进行维度修正
+        trans_centered = l_t_transition - mu_transition #(ssm_num , bs*(seq-1) , dim_l)
+        trans_covariance = tf.tile(tf.expand_dims(self.Q ,0), [trans_centered.shape[0],1,1,1,1])
+        trans_covariance = tf.reshape(trans_covariance[:,:,1:], [l_smooth.shape[0],-1, self.dim_l , self.dim_l])
+        mvn_transition = tfp.distributions.MultivariateNormalTriL(tf.zeros_like(trans_centered), tf.cholesky(trans_covariance))
+        log_prob_transition = mvn_transition.log_prob(trans_centered) #(ssm_num ,bs*(seq-1) )
 
         ## Emission distribution \prod_{t=1}^T p(y_t|z_t)
         # We need to evaluate N(y_t; Cz_t, R). We write it as N(y_t - Cz_t; 0, R)
-        # z_t_emission = tf.reshape(z_smooth, [-1, self.dim_l])
-        # Cz_t = tf.transpose(tf.matmul(self.C, tf.transpose(z_t_emission)))
-        Cz_t = tf.reshape(tf.matmul(C, tf.expand_dims(z_smooth, 3)), [-1, self.dim_z])
+        Cz_t = tf.reshape(tf.matmul(C, tf.expand_dims(l_smooth, -1)), [l_smooth.shape[0],-1, self.dim_z]) #(ssm_num ,bs*seq , dim_z)
+        z_t_resh = tf.reshape(self.z, [-1, self.dim_z])
+        emiss_centered = z_t_resh - Cz_t
+        emiss_covariance = tf.tile(tf.expand_dims(self.R, 0), [emiss_centered.shape[0], 1, 1, 1, 1])
+        emiss_covariance = tf.reshape(emiss_covariance[:, :, 1:], [l_smooth.shape[0], -1, self.dim_z, self.dim_z]) #(ssm_num , bs*seq , dim_z)
+        mvn_emission = tfp.distributions.MultivariateNormalTriL(tf.zeros_like(emiss_centered), tf.cholesky(emiss_covariance))
+        mask_flat = tf.reshape(self.mask, (l_smooth.shape[0],-1, )) #self.mask #(ssm_num ,bs,seq , 1) -->#(ssm_num, bs*seq)
+        log_prob_emission = mvn_emission.log_prob(emiss_centered) #(ssm_num , bs*seq)
+        log_prob_emission = tf.multiply(mask_flat, log_prob_emission) #(ssm_num , bs*seq)
 
-        y_t_resh = tf.reshape(self.z, [-1, self.dim_z])
-        emiss_centered = y_t_resh - Cz_t
-        mvn_emission = tfp.distributions.MultivariateNormalTriL(tf.zeros(self.dim_z), tf.cholesky(self.R))
-        mask_flat = tf.reshape(self.mask, (-1, ))
-        log_prob_emission = mvn_emission.log_prob(emiss_centered)
-        log_prob_emission = tf.multiply(mask_flat, log_prob_emission)
-
-        ## Distribution of the initial state p(z_1|z_0)
-        z_0 = z_smooth[:, 0, :]
+        ## Distribution of the initial state p(l_1|l_0)
+        l_0 = tf.squeeze(l_smooth[:, : , 0, :], -2)  #l_0 (ssm_num , bs , dim_z)
         mvn_0 = tfp.distributions.MultivariateNormalTriL(self.mu, tf.cholesky(self.Sigma))
-        log_prob_0 = mvn_0.log_prob(z_0)
+        log_prob_0 = mvn_0.log_prob(l_0) #(ssm_num , bs)
 
         # Entropy log(\prod_{t=1}^T p(z_t|y_{1:T}, u_{1:T}))
-        entropy = - mvn_smooth.log_prob(z_smooth)
-        entropy = tf.reshape(entropy, [-1])
-        # entropy = tf.zeros(())
+        # TODO: 处理一下 sum 维度的问题
+        entropy = - mvn_smooth.log_prob(l_smooth) #(ssm_num , bs, seq)
+        entropy = tf.reshape(entropy, [entropy.shape[0] , -1]) #(ssm_num , bs*seq)
 
         # Compute terms of the lower bound
         # We compute the log-likelihood *per frame*
@@ -343,15 +349,15 @@ class MultiKalmanFilter(object):
 
         kf_elbo = tf.reduce_sum(log_probs)
 
-        return kf_elbo, log_probs, z_smooth
+        return kf_elbo, log_probs, l_smooth
 
     def filter(self):
         mu_pred, Sigma_pred, mu_filt, Sigma_filt, alpha, u, state,  A, B, C = forward_states = \
             self.compute_forwards(reuse=True)
-        forward_states = [mu_filt, Sigma_filt]
+        forward_states = [mu_filt, Sigma_filt] #(seq , ssm_num ,bs , dim_l)  (seq , ssm_num , bs , dim_l , dim_l)
         # Swap batch dimension and time dimension
-        forward_states[0] = tf.transpose(forward_states[0], [1, 0, 2])
-        forward_states[1] = tf.transpose(forward_states[1], [1, 0, 2, 3])
+        forward_states[0] = tf.transpose(forward_states[0], [1, 2, 0, 3])
+        forward_states[1] = tf.transpose(forward_states[1], [1, 2, 0, 3 , 4])
         return tuple(forward_states), tf.transpose(A, [1, 2, 0, 3, 4]), tf.transpose(B, [1, 2, 0, 3, 4]), \
                tf.transpose(C, [1, 2, 0, 3, 4]), tf.transpose(alpha, [1, 2, 0, 3])
 

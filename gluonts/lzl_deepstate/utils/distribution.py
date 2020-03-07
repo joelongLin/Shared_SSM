@@ -1,7 +1,7 @@
 import tensorflow as tf
 import numpy as np
 import math
-from .func import erf
+from .func import erf , erfinv
 import tensorflow_probability as tfp
 
 def _expand_param(p, num_samples= None):
