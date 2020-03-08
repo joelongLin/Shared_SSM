@@ -1,5 +1,6 @@
 import tensorflow as tf
 import tensorflow_probability as tfp
+from ..utils.distribution import MultivariateGaussian
 import numpy as np
 
 
@@ -78,7 +79,7 @@ class MultiKalmanFilter(object):
         输入： p(l_t|z_(1:t-1)) , z_t
         输出： p(l_t|z_(1:t)) , p(l_(t+1) | z_(1:t))
         """
-        mu_pred, Sigma_pred, _, _, alpha, u, state, _, _, _ = params
+        mu_pred, Sigma_pred, _, _, alpha, u, state, _, _, _  = params
         valueInputs , Q , R = inputs #(ssm_num, bs  ,2+dim_u) , (bs ,dim_l ,dim_l)
         z = tf.slice(valueInputs, [0,0,0], [-1,-1, self.dim_z])  # (ssm_num , bs, dim_z)
         _u = tf.slice(valueInputs, [0,0, self.dim_z], [-1,-1, self.dim_u])  # (ssm_num ,bs, dim_u)
@@ -145,7 +146,7 @@ class MultiKalmanFilter(object):
 
     def compute_forwards(self, reuse=None):
         """
-        计算 Kalman Filter 的前向
+        计算 Kalman Filter 的前向， 同时计算 filter 之后的log_p
         是一种 on_line 设置
         # 注意这里的 bs 前面都多了一个 ssm_num 的维度，已经增加
         输入: 初始状态 l_0 , z_(1:T)
@@ -162,8 +163,13 @@ class MultiKalmanFilter(object):
 
         z_prev = tf.expand_dims(self.z_0, 1)  # (ssm_num,1, 1)
         z_prev = tf.tile(z_prev, (1,tf.shape(self.mu)[1], 1)) #(ssm_num , bs , 1)
-        alpha, state, u = self.alpha_fn(z_prev, self.state, self.u[:, :, 0], reuse= reuse)
-
+        try:
+            alpha, state, u = self.alpha_fn(z_prev, self.state, self.u[:, :, 0], reuse= reuse)
+        except Exception:
+            print('可能是第一次调用 shared_SSM.alpha 中的 alpha组件')
+            alpha, state, u = self.alpha_fn(z_prev, self.state, self.u[:, :, 0], reuse=None)
+        finally:
+            pass
         # 用于占位的矩阵 A B C
         dummy_init_A = tf.ones([self.Sigma.get_shape()[0] , self.Sigma.get_shape()[1], self.dim_l, self.dim_l])
         dummy_init_B = tf.ones([self.Sigma.get_shape()[0], self.Sigma.get_shape()[1], self.dim_l, self.dim_u])
@@ -219,70 +225,6 @@ class MultiKalmanFilter(object):
 
         return backward_states, A, B, C, alpha
 
-    def sample_generative_tf(self, backward_states, n_steps, deterministic=True, init_fixed_steps=1):
-        """
-        Get a sample from the generative model
-        """
-        # Get states from the Kalman filter to get the initial state
-        mu_l, sigma_l = backward_states
-        # l = tf.contrib.distributions.MultivariateNormalTriL(mu_l[seq_idx, 0], sigma_l[seq_idx, 0]).sample()
-
-        if init_fixed_steps > 0:
-            l = mu_l[:, 0]
-            l = tf.expand_dims(l, 2)
-        else:
-            raise("Prior sampling from l not implemented")
-
-        if not deterministic:
-            # Pre-compute samples of noise
-            noise_trans = tfp.distributions.MultivariateNormalTriL(tf.zeros((self.dim_l,)), tf.cholesky(self.Q))
-            epsilon = noise_trans.sample((l.get_shape()[0].value, n_steps))
-            noise_emiss = tfp.distributions.MultivariateNormalTriL(tf.zeros((self.dim_z,)), tf.cholesky(self.R))
-            delta = noise_emiss.sample((l.get_shape()[0].value, n_steps))
-        else:
-            epsilon = tf.zeros((l.get_shape()[0], n_steps, self.dim_l))
-            delta = tf.zeros((l.get_shape()[0], n_steps, self.dim_z))
-
-        z_prev = tf.expand_dims(self.z_0, 0)  # (1, dim_z)
-        z_prev = tf.tile(z_prev, (tf.shape(self.mu)[0], 1))  # (bs, dim_z_ob)
-        alpha, state, u = self.alpha_fn(z_prev, self.state, self.u[:, 0], reuse=True)
-
-        z_samples = list()
-        l_samples = list()
-        alpha_samples = list()
-        for n in range(n_steps):
-
-            # Mixture of C
-            C = tf.matmul(alpha, tf.reshape(self.C, [-1, self.dim_z * self.dim_l]))  # (bs, k) x (k, dim_z_ob*dim_z)
-            C = tf.reshape(C, [-1, self.dim_z, self.dim_l])  # (bs, dim_z_ob, dim_z)
-
-            # Output for the current time step
-            y = tf.matmul(C, l) + tf.expand_dims(delta[:, n], 2)
-            y = tf.squeeze(y, 2)
-
-            # Store current state and output at time t
-            l_samples.append(tf.squeeze(l, 2))
-            z_samples.append(y)
-
-            # Compute the mixture of A
-            alpha, state, u = self.alpha_fn(y, state, self.u[:, n], reuse=True)
-            alpha_samples.append(alpha)
-            A = tf.matmul(alpha, tf.reshape(self.A, [-1, self.dim_l * self.dim_l]))
-            A = tf.reshape(A, [-1, self.dim_l, self.dim_l])
-
-            # Mixture of B
-            B = tf.matmul(alpha, tf.reshape(self.B, [-1, self.dim_l * self.dim_u]))  # (bs, k) x (k, dim_z_ob*dim_z)
-            B = tf.reshape(B, [-1, self.dim_l, self.dim_u])  # (bs, dim_z_ob, dim_l)
-
-            # Get new state z_{t+1}
-            # l = tf.matmul(A, l) + tf.matmul(B,  tf.expand_dims(self.u[:, n],2)) + tf.expand_dims(epsilon[:, n], 2)
-            if (n + 1) >= init_fixed_steps:
-                l = tf.matmul(A, l) + tf.matmul(B,  tf.expand_dims(u, 2)) + tf.expand_dims(epsilon[:, n], 2)
-            else:
-                l = mu_l[:, n+1]
-                l = tf.expand_dims(l, 2)
-
-        return tf.stack(z_samples, 1), tf.stack(l_samples, 1), tf.stack(alpha_samples, 1)
 
     def get_elbo(self, backward_states, A, B, C):
         '''
@@ -318,48 +260,68 @@ class MultiKalmanFilter(object):
         log_prob_transition = mvn_transition.log_prob(trans_centered) #(ssm_num ,bs*(seq-1) )
 
         ## Emission distribution \prod_{t=1}^T p(y_t|z_t)
-        # We need to evaluate N(y_t; Cz_t, R). We write it as N(y_t - Cz_t; 0, R)
-        Cz_t = tf.reshape(tf.matmul(C, tf.expand_dims(l_smooth, -1)), [l_smooth.shape[0],-1, self.dim_z]) #(ssm_num ,bs*seq , dim_z)
-        z_t_resh = tf.reshape(self.z, [-1, self.dim_z])
-        emiss_centered = z_t_resh - Cz_t
+        # We need to evaluate N(y_t; Cl_t, R). We write it as N(y_t - Cl_t; 0, R)
+        Cl_t = tf.reshape(tf.matmul(C, tf.expand_dims(l_smooth, -1)), [l_smooth.shape[0],-1, self.dim_z]) #(ssm_num ,bs*seq , dim_z)
+        z_t_resh = tf.reshape(self.z, [l_smooth.shape[0],-1, self.dim_z])
+        emiss_centered = z_t_resh - Cl_t
         emiss_covariance = tf.tile(tf.expand_dims(self.R, 0), [emiss_centered.shape[0], 1, 1, 1, 1])
-        emiss_covariance = tf.reshape(emiss_covariance[:, :, 1:], [l_smooth.shape[0], -1, self.dim_z, self.dim_z]) #(ssm_num , bs*seq , dim_z)
+        emiss_covariance = tf.reshape(emiss_covariance, [l_smooth.shape[0], -1, self.dim_z, self.dim_z]) #(ssm_num , bs*seq , dim_z)
         mvn_emission = tfp.distributions.MultivariateNormalTriL(tf.zeros_like(emiss_centered), tf.cholesky(emiss_covariance))
         mask_flat = tf.reshape(self.mask, (l_smooth.shape[0],-1, )) #self.mask #(ssm_num ,bs,seq , 1) -->#(ssm_num, bs*seq)
         log_prob_emission = mvn_emission.log_prob(emiss_centered) #(ssm_num , bs*seq)
         log_prob_emission = tf.multiply(mask_flat, log_prob_emission) #(ssm_num , bs*seq)
 
         ## Distribution of the initial state p(l_1|l_0)
-        l_0 = tf.squeeze(l_smooth[:, : , 0, :], -2)  #l_0 (ssm_num , bs , dim_z)
+        l_0 = l_smooth[:, : , 0, :]  #l_0 (ssm_num , bs , dim_l)
         mvn_0 = tfp.distributions.MultivariateNormalTriL(self.mu, tf.cholesky(self.Sigma))
         log_prob_0 = mvn_0.log_prob(l_0) #(ssm_num , bs)
 
         # Entropy log(\prod_{t=1}^T p(z_t|y_{1:T}, u_{1:T}))
-        # TODO: 处理一下 sum 维度的问题
         entropy = - mvn_smooth.log_prob(l_smooth) #(ssm_num , bs, seq)
         entropy = tf.reshape(entropy, [entropy.shape[0] , -1]) #(ssm_num , bs*seq)
 
         # Compute terms of the lower bound
         # We compute the log-likelihood *per frame*
-        num_el = tf.reduce_sum(mask_flat)
-        log_probs = [tf.truediv(tf.reduce_sum(log_prob_transition), num_el),
-                     tf.truediv(tf.reduce_sum(log_prob_emission), num_el),
-                     tf.truediv(tf.reduce_sum(log_prob_0), num_el),
-                     tf.truediv(tf.reduce_sum(entropy), num_el)]
+        num_el = tf.reduce_sum(mask_flat, axis=-1) #(ssm_num , )
+        log_probs = [tf.truediv(tf.reduce_sum(log_prob_transition , axis=-1), num_el),
+                     tf.truediv(tf.reduce_sum(log_prob_emission ,  axis=-1), num_el),
+                     tf.truediv(tf.reduce_sum(log_prob_0 , axis=-1), num_el),
+                     tf.truediv(tf.reduce_sum(entropy , axis=-1), num_el)]
 
-        kf_elbo = tf.reduce_sum(log_probs)
+        kf_elbo = tf.reduce_sum(log_probs, axis=0) #(ssm_num ,)
 
         return kf_elbo, log_probs, l_smooth
 
+    def get_filter_log_q_seq(self, mu_pred, Sigma_pred,C):
+        '''
+        :param mu_pred:  #(seq , ssm_num , bs , dim_l)
+        :param Sigma_pred:  #(seq, ssm_num , bs , dim_l, dim_l)
+        :param C : #(seq, ssm_num ,bs, dim_z , dim_l)
+        :return: log_q_seq  #(seq , ssm_num , bs)
+        '''
+        # self.z  #(ssm_num ,bs, seq, dim_z)
+        # C_t  l_(t | t-1)
+        output_mean = tf.squeeze(tf.matmul(C , tf.expand_dims(mu_pred,-1)) ,-1) #(seq, ssm_num ,bs , dim_z)
+        R = tf.tile(tf.expand_dims(self.R, 0), [output_mean.shape[1], 1, 1, 1, 1]) #(ssm_num ,bs, seq , dim_l, dim_l)
+        R = tf.transpose(R,[2,0,1,3,4])
+        output_cov = tf.matmul(tf.matmul(C, Sigma_pred), C, transpose_b=True) + R #(seq , ssm_num ,bs, dim_z, dim_z)
+        mvg = tfp.distributions.MultivariateNormalTriL(output_mean ,tf.linalg.cholesky(output_cov))
+        z_time_first = tf.transpose(self.z , [2,0,1,3]) #(seq, ssm_num ,bs, dim_z)
+        log_q_seq = mvg.log_prob(z_time_first) #(seq , ssm_num , bs)
+        log_q_seq = tf.transpose(log_q_seq , [1,2,0])
+        return log_q_seq
+
     def filter(self):
-        mu_pred, Sigma_pred, mu_filt, Sigma_filt, alpha, u, state,  A, B, C = forward_states = \
-            self.compute_forwards(reuse=True)
+        # TODO: 暂时把compute forward 函数里面的reuse 给去除
+        mu_pred, Sigma_pred, mu_filt, Sigma_filt, alpha, u, state,  A, B, C  = forward_states = \
+            self.compute_forwards()
+        log_q_seq = self.get_filter_log_q_seq(mu_pred , Sigma_pred, C)
         forward_states = [mu_filt, Sigma_filt] #(seq , ssm_num ,bs , dim_l)  (seq , ssm_num , bs , dim_l , dim_l)
         # Swap batch dimension and time dimension
         forward_states[0] = tf.transpose(forward_states[0], [1, 2, 0, 3])
         forward_states[1] = tf.transpose(forward_states[1], [1, 2, 0, 3 , 4])
         return tuple(forward_states), tf.transpose(A, [1, 2, 0, 3, 4]), tf.transpose(B, [1, 2, 0, 3, 4]), \
-               tf.transpose(C, [1, 2, 0, 3, 4]), tf.transpose(alpha, [1, 2, 0, 3])
+               tf.transpose(C, [1, 2, 0, 3, 4]), tf.transpose(alpha, [1, 2, 0, 3]) , log_q_seq
 
     def smooth(self):
         backward_states, A, B, C, alpha = self.compute_backwards(self.compute_forwards())
@@ -385,4 +347,6 @@ class MultiKalmanFilter(object):
         sast = tf.transpose(sast, [0,1, 3, 2]) #(ssm_num , bs , dim_z , dim_u)
         sast = tf.matmul(K, sast) #(ssm_num , bs ,dim_l , dim_l )
         return sast
+
+
 

@@ -93,8 +93,6 @@ class MultivariateGaussian(object):
 
     def log_prob(self, x) :
         # todo add an option to compute loss on diagonal covariance only to save time
-        # print('log prob input  shape', x.shape)
-        # print('self.mu , self.L  shape', self.mu.shape , self.L.shape)
 
         # remark we compute d from the tensor but we could ask it to the user alternatively
         d = tf.math.reduce_max(
@@ -109,15 +107,11 @@ class MultivariateGaussian(object):
         ll = (
             tf.math.subtract(
                 -d / 2 * math.log(2 * math.pi)
-                ,tf.math.reduce_sum(tf.math.log(tf.linalg.diag_part(self.L))
-                                    , axis=1
-                )
-            )
-            - 1
-            / 2
-            * tf.squeeze(
-                tf.linalg.matmul(L_inv_times_residual, tf.transpose(L_inv_times_residual, [0, 2, 1]))
-            )
+                ,tf.math.reduce_sum(tf.math.log(tf.linalg.diag_part(self.L)), axis=2)
+            ) #(seq , ssm_num  , dim_z)
+            -1/2* tf.squeeze(
+                tf.linalg.matmul(L_inv_times_residual, tf.transpose(L_inv_times_residual, [0,1,2,4,3])), -1
+            ) #(seq, bs , dim_z)
         )
 
         return ll

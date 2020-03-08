@@ -294,6 +294,7 @@ class SharedSSM(object):
         with tf.variable_scope(name, reuse=reuse):
             # 只执行一步
             # reshape 之后确实可以恢复回来
+            print(self.alpha_model.name)
             inputs = tf.reshape(inputs , (-1,1) ) #(bs*ssm_num ,1)
             output, state = self.alpha_model(inputs, state) #(bs*ssm_num , cell_units) ,(h,c)
             # Get Alpha as the first part of the output
@@ -365,19 +366,13 @@ class SharedSSM(object):
                                     alpha=self.alpha,
                                     state = alpha_lstm_init
                                     )
-        smooth, A, B, C, alpha_plot = self.kf.smooth()
-        filter, A_filter, B_filter, C_filter, _ = self.kf.filter()
-
-        # TODO: 完成对 elbo 的书写
-        #  或者deepstate LDS那样，在执行 filter算法时
-        result = self.kf.get_elbo(
-            backward_states=smooth,
-            A= A,
-            B=B,
-            C=C
-        )
-        pass
-
+        # smooth, A, B, C, alpha_plot = self.kf.smooth()
+        filter, A_filter, B_filter, C_filter, _ ,log_p = self.kf.filter()
+        print('log_p shape : ' , log_p.shape)
+        print('建模暂时成功...')
+        exit()
+        # kf_elbo, log_probs, l_smooth = self.kf.get_elbo(backward_states=smooth, A= A, B=B, C=C)
+        return self
     def build_predict_forward(self):
         pass
 
