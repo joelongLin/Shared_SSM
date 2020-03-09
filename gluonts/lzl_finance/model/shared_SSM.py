@@ -30,12 +30,12 @@ class SharedSSM(object):
         self.config = config
         self.sess = sess
 
+
         #导入原始的数据 , 确定了 SSM 的数量 ， env_dim 的维度，将ListData对象存放在list中
         self.load_original_data()
 
         #将导入的原始数据放入dataloader中, 使其能产生placeholders需要的内容
         self.transform_data()
-
         # 开始搭建有可能Input 对应的 placeholder
         self.placeholders = {
             "past_environment": tf.placeholder(dtype=tf.float32,shape=[config.batch_size, config.past_length, self.env_dim],name="past_environment"),
@@ -235,6 +235,8 @@ class SharedSSM(object):
                 self.time_feature_lstm.append(cell)
 
             self.time_feature_lstm = tf.nn.rnn_cell.MultiRNNCell(self.time_feature_lstm)
+            # self.time_feature_lstm = tf.nn.rnn_cell.BasicLSTMCell(self.time_feature_lstm)
+
             # TODO: 关于 noise 的大小是否要 限定在 0 和 1 之间，也值得讨论
             self.noise_emission_model = tf.layers.Dense(units=1, dtype=tf.float32, name='noise_emission')
             self.noise_transition_model = tf.layers.Dense(units=1 , dtype=tf.float32 , name='noise_transition')
@@ -269,13 +271,12 @@ class SharedSSM(object):
 
         return self
 
-    def alpha(self, inputs, state=None, u=None,  reuse=None, name='alpha'):
+    def alpha(self, inputs, state=None, reuse=None, name='alpha'):
         """
         是为了给SSM产生转移矩阵的混合系数
         Args:
             inputs: tensor to condition mixing vector on (ssm_num , bs , 1)
             state: previous state of RNN network
-            u: pass-through variable if u is given
             reuse: `True` or `None`; if `True`, we go into reuse mode for this scope as
                     well as all sub-scopes; if `None`, we just inherit the parent scope reuse.
             name: name of the scope
@@ -288,19 +289,18 @@ class SharedSSM(object):
 
         # If K == 1, return inputs
         if self.config.K == 1:
-            return tf.ones([self.ssm_num,self.config.batch_size, self.config.K]), state, u
+            return tf.ones([self.ssm_num,self.config.batch_size, self.config.K]), state
 
         # Initial state for the alpha RNN
         with tf.variable_scope(name, reuse=reuse):
             # 只执行一步
             # reshape 之后确实可以恢复回来
-            print(self.alpha_model.name)
             inputs = tf.reshape(inputs , (-1,1) ) #(bs*ssm_num ,1)
             output, state = self.alpha_model(inputs, state) #(bs*ssm_num , cell_units) ,(h,c)
             # Get Alpha as the first part of the output
             alpha = self.alpha_dense(output[:, :self.config.alpha_units])
             alpha = tf.reshape(alpha , (self.ssm_num,self.config.batch_size,self.config.K))
-        return alpha, state, u
+        return alpha, state
 
     def build_train_forward(self):
         env_norm , env_scale  = self.scaler.build_forward(
@@ -313,20 +313,24 @@ class SharedSSM(object):
             observed_indicator = self.placeholders['past_target_observed']
         )#(bs , seq , ssm_num , 1) , (bs , ssm_num , 1)
 
-        # 对 past_time_feature 进行处理
+
+        # TODO: 这里在执行 self.placeholders['??']的时候好像容易报错
+        # 对 time_feature 进行处理
+        print('begin use')
         time_rnn_out, _ = tf.nn.dynamic_rnn(
             cell=self.time_feature_lstm,
             inputs = self.placeholders['past_time_feature'],
             initial_state=None,
-            dtype=tf.float32
+            dtype=tf.float32,
         )  # (bs,seq_length ,hidden_dim)
+        # time_rnn_out = tf.get_variable(shape=(32,90,40),dtype=tf.float32, trainable=True , name='rnn_out')
         eyes = tf.eye(self.config.dim_l)
-        Q = self.noise_transition_model(time_rnn_out) #(bs, seq , 1)
-        Q = tf.multiply(eyes , tf.expand_dims(Q , axis=-1))
-        R = self.noise_emission_model(time_rnn_out) #(bs, seq , 1)
-        R = tf.expand_dims(R , axis=-1)
+        self.Q = self.noise_transition_model(time_rnn_out) #(bs, seq , 1)
+        self.Q = tf.multiply(eyes , tf.expand_dims(self.Q , axis=-1))
+        self.R = self.noise_emission_model(time_rnn_out) #(bs, seq , 1)
+        self.R = tf.expand_dims(self.R , axis=-1)
 
-        print('Q shape : {} , R shape : {}'.format(Q.shape , R.shape))
+        print('Q shape : {} , R shape : {}'.format(self.Q.shape , self.R.shape))
 
         # 对 environment 进行处理
         env_rnn_out, _ = tf.nn.dynamic_rnn(
@@ -335,12 +339,12 @@ class SharedSSM(object):
             initial_state=None,
             dtype=tf.float32
         )  # (bs,seq_length ,hidden_dim)
-        u = tf.stack(
+        self.u = tf.stack(
             [model(env_rnn_out)
             for model in self.u_model],
             axis = 0
         ) #(ssm_num , bs ,seq , dim_u)
-        print('u: ' ,  u)
+        print('u: ' ,  self.u)
 
         # 为 Kalman Filter 提供LSTM的初始状态
         dummy_lstm = tf.nn.rnn_cell.LSTMCell(self.config.alpha_units)
@@ -353,11 +357,11 @@ class SharedSSM(object):
                                     A=self.init_vars['A'],  # state transition function
                                     B=self.init_vars['B'],  # control matrix
                                     C=self.init_vars['C'],  # Measurement function
-                                    R=R,  # measurement noise
-                                    Q=Q,  # process noise
+                                    R=self.R,  # measurement noise
+                                    Q=self.Q,  # process noise
                                     z=target_norm,  # output
                                     z_scale = target_scale , # scale of output
-                                    u = u,
+                                    u = self.u,
                                     # mask 这里面会多一维度 (bs,seq , ssm_num ,1)
                                     mask=self.placeholders['past_target_observed'],
                                     mu=self.init_vars['mu'],
@@ -366,15 +370,13 @@ class SharedSSM(object):
                                     alpha=self.alpha,
                                     state = alpha_lstm_init
                                     )
-        # smooth, A, B, C, alpha_plot = self.kf.smooth()
-        filter, A_filter, B_filter, C_filter, _ ,log_p = self.kf.filter()
-        print('log_p shape : ' , log_p.shape)
+
+        filter, A_filter, B_filter, C_filter, _ , self.filter_loss = self.kf.filter()
         print('建模暂时成功...')
-        exit()
         # kf_elbo, log_probs, l_smooth = self.kf.get_elbo(backward_states=smooth, A= A, B=B, C=C)
         return self
     def build_predict_forward(self):
-        pass
+        return self
 
     def initialize_variables(self):
         """ Initialize variables or load saved model
@@ -392,6 +394,9 @@ class SharedSSM(object):
             self.saver.restore(self.sess, params_path)
         else:
             print("Training to get new model params")
+            # fuck_you_random_feed = {
+            #     self.placeholders['past_time_feature'] : np.random.normal(size=(self.config.batch_size , self.config.past_length , self.time_dim))
+            # }
             self.sess.run(tf.global_variables_initializer())
         return self
 
@@ -423,6 +428,7 @@ class SharedSSM(object):
                 ))
             else:
                 print('第', batch_no, '内容为空')
+        exit()
         #如果导入已经有的信息,不进行训练
         if self.config.reload_model != '':
             return

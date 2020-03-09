@@ -5,7 +5,7 @@
 reload_model=''
 target="btc,eth"
 environment='gold'
-logs_dir="logs/"$dataset
+logs_dir="logs/btc_eth"
 past_length='90'
 prediction_length='5'
 for ((i=1;i<=1;i=i+1))#! repettion

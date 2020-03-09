@@ -14,7 +14,7 @@ cl = tf.app.flags
 reload_model = ''
 cl.DEFINE_string('reload_model' ,reload_model,'model to reload')
 cl.DEFINE_string('logs_dir','logs/btc_eth','file to print log')
-cl.DEFINE_float('dropout_rate' , 0.1 , 'Dropout regularization parameter (default: 0.1)')
+cl.DEFINE_float('dropout_rate' , 0.01 , 'Dropout regularization parameter (default: 0.1)')
 
 # SSM configuration
 cl.DEFINE_integer('dim_z', 1, 'Dimension of the observation in the LGSSM')
@@ -76,12 +76,14 @@ def main(_):
     config = reload_config(config)
     configuration = tf.compat.v1.ConfigProto()
     configuration.gpu_options.allow_growth = True
+
+
     with tf.compat.v1.Session(config=configuration) as sess:
         sharedSSM = SharedSSM(config=config, sess=sess)\
             .build_module().build_train_forward().build_predict_forward().initialize_variables()
-        sharedSSM.train()
-        sharedSSM.predict()
-        sharedSSM.evaluate()
+        # sharedSSM.train()
+        # sharedSSM.predict()
+        # sharedSSM.evaluate()
 
 
 

@@ -37,14 +37,13 @@ class MultiKalmanFilter(object):
         init = kwargs.pop('B', None).astype(np.float32)
         self.B = tf.get_variable('B', initializer=init)  # control transition matrix
 
-        init = kwargs.pop('Q', None)
-        self.Q = tf.get_variable('Q', initializer=init, trainable=False)  # process uncertainty
+        # 注意这里，千万不要 tf.get_variable
+        self.Q = kwargs.pop('Q', None)
 
         init = kwargs.pop('C', None).astype(np.float32)
         self.C = tf.get_variable('C', initializer=init)   # Measurement function
 
-        init = kwargs.pop('R', None)
-        self.R = tf.get_variable('R', initializer=init, trainable=False)   # state uncertainty
+        self.R = kwargs.pop('R', None)
 
         self._alpha_sq = tf.constant(1., dtype=tf.float32) # fading memory control
         self.M = 0              # process-measurement cross correlation
@@ -79,7 +78,7 @@ class MultiKalmanFilter(object):
         输入： p(l_t|z_(1:t-1)) , z_t
         输出： p(l_t|z_(1:t)) , p(l_(t+1) | z_(1:t))
         """
-        mu_pred, Sigma_pred, _, _, alpha, u, state, _, _, _  = params
+        mu_pred, Sigma_pred, _, _, alpha, state, _, _, _  = params
         valueInputs , Q , R = inputs #(ssm_num, bs  ,2+dim_u) , (bs ,dim_l ,dim_l)
         z = tf.slice(valueInputs, [0,0,0], [-1,-1, self.dim_z])  # (ssm_num , bs, dim_z)
         _u = tf.slice(valueInputs, [0,0, self.dim_z], [-1,-1, self.dim_u])  # (ssm_num ,bs, dim_u)
@@ -110,7 +109,7 @@ class MultiKalmanFilter(object):
         Sigma_t = tf.matmul(tf.matmul(I_KC, Sigma_pred), I_KC, transpose_b=True) + self._sast(R, K)  # (ssm_num , bs, dim_l, dim_l)
 
         # Mixture of A
-        alpha, state, u = self.alpha_fn(tf.multiply(mask, z) + tf.multiply((1 - mask), z_pred), state, _u, reuse=True)  # (ssm_num ,bs, k)
+        alpha, state = self.alpha_fn(tf.multiply(mask, z) + tf.multiply((1 - mask), z_pred), state, reuse=True)  # (ssm_num ,bs, k)
         A = tf.matmul(alpha, tf.reshape(self.A, [-1,alpha.shape[-1], self.dim_l * self.dim_l]))  # (ssm_num ,bs, k) x (ssm_num ,k, dim_l*dim_l)
         A = tf.reshape(A, [alpha.shape[0], alpha.shape[1], self.dim_l, self.dim_l])  # (bs, dim_l, dim_l)
         A.set_shape(Sigma_pred.get_shape())  # ( ssm_num , batch_size , dim_l , dim_l)
@@ -121,10 +120,10 @@ class MultiKalmanFilter(object):
         B.set_shape([A.get_shape()[0], A.get_shape()[1], self.dim_l, self.dim_u])
 
         # Prediction
-        mu_pred = tf.squeeze(tf.matmul(A, tf.expand_dims(mu_t, -1)) ,-1) + tf.squeeze(tf.matmul(B, tf.expand_dims(u, -1)) ,-1) #(ssm_num , bs , dim_l)
+        mu_pred = tf.squeeze(tf.matmul(A, tf.expand_dims(mu_t, -1)) ,-1) + tf.squeeze(tf.matmul(B, tf.expand_dims(_u, -1)) ,-1) #(ssm_num , bs , dim_l)
         Sigma_pred = tf.scalar_mul(self._alpha_sq, tf.matmul(tf.matmul(A, Sigma_t), A, transpose_b=True) + Q) #(ssm_num ,bs, dim_l, dim_l )
 
-        return mu_pred, Sigma_pred, mu_t, Sigma_t, alpha, u, state, A, B, C
+        return mu_pred, Sigma_pred, mu_t, Sigma_t, alpha, state, A, B, C
 
     def backward_step_fn(self, params, inputs):
         """
@@ -163,19 +162,13 @@ class MultiKalmanFilter(object):
 
         z_prev = tf.expand_dims(self.z_0, 1)  # (ssm_num,1, 1)
         z_prev = tf.tile(z_prev, (1,tf.shape(self.mu)[1], 1)) #(ssm_num , bs , 1)
-        try:
-            alpha, state, u = self.alpha_fn(z_prev, self.state, self.u[:, :, 0], reuse= reuse)
-        except Exception:
-            print('可能是第一次调用 shared_SSM.alpha 中的 alpha组件')
-            alpha, state, u = self.alpha_fn(z_prev, self.state, self.u[:, :, 0], reuse=None)
-        finally:
-            pass
+        alpha, state = self.alpha_fn(z_prev, self.state, reuse= reuse)
         # 用于占位的矩阵 A B C
         dummy_init_A = tf.ones([self.Sigma.get_shape()[0] , self.Sigma.get_shape()[1], self.dim_l, self.dim_l])
         dummy_init_B = tf.ones([self.Sigma.get_shape()[0], self.Sigma.get_shape()[1], self.dim_l, self.dim_u])
         dummy_init_C = tf.ones([self.Sigma.get_shape()[0], self.Sigma.get_shape()[1], self.dim_z, self.dim_l])
         forward_states = tf.scan(self.forward_step_fn, inputs,
-                                 initializer=(self.mu, self.Sigma, self.mu, self.Sigma, alpha, u, state,
+                                 initializer=(self.mu, self.Sigma, self.mu, self.Sigma, alpha, state,
                                               dummy_init_A, dummy_init_B, dummy_init_C),
                                  parallel_iterations=1, name='forward')
         return forward_states
@@ -190,7 +183,7 @@ class MultiKalmanFilter(object):
         输出： p(l_t | z_(1:T) , u_(1:T)) , t= 2,...,T
 
         '''
-        mu_pred, Sigma_pred, mu_filt, Sigma_filt, alpha, u, state, A, B, C = forward_states
+        mu_pred, Sigma_pred, mu_filt, Sigma_filt, alpha, state, A, B, C = forward_states
         mu_pred = tf.expand_dims(mu_pred, -1) #(seq , ssm_num , bs , dim_l ,1)
         mu_filt = tf.expand_dims(mu_filt, -1) #(seq , ssm_num , bs , dim_l , 1)
         states_scan = [mu_pred[:-1, :, :, : ,:],
@@ -305,17 +298,21 @@ class MultiKalmanFilter(object):
         R = tf.tile(tf.expand_dims(self.R, 0), [output_mean.shape[1], 1, 1, 1, 1]) #(ssm_num ,bs, seq , dim_l, dim_l)
         R = tf.transpose(R,[2,0,1,3,4])
         output_cov = tf.matmul(tf.matmul(C, Sigma_pred), C, transpose_b=True) + R #(seq , ssm_num ,bs, dim_z, dim_z)
-        mvg = tfp.distributions.MultivariateNormalTriL(output_mean ,tf.linalg.cholesky(output_cov))
+        # TODO: 看到其他地方都是用 0 作为 期望的，所以这里改一下
+        mvg = tfp.distributions.MultivariateNormalTriL(tf.zeros_like(output_mean) ,tf.linalg.cholesky(output_cov))
+        mask = tf.squeeze(self.mask, -1)  # self.mask #(ssm_num ,bs,seq , 1) -->#(ssm_num, bs,seq)
         z_time_first = tf.transpose(self.z , [2,0,1,3]) #(seq, ssm_num ,bs, dim_z)
-        log_q_seq = mvg.log_prob(z_time_first) #(seq , ssm_num , bs)
-        log_q_seq = tf.transpose(log_q_seq , [1,2,0])
+        log_q_seq = mvg.log_prob(z_time_first - output_mean) #(seq , ssm_num ,bs )
+        log_q_seq = tf.multiply(mask , tf.transpose(log_q_seq , [1,2,0])) #(ssm_num, bs ,seq)
         return log_q_seq
 
     def filter(self):
-        # TODO: 暂时把compute forward 函数里面的reuse 给去除
-        mu_pred, Sigma_pred, mu_filt, Sigma_filt, alpha, u, state,  A, B, C  = forward_states = \
+        #  暂时把compute forward 函数里面的reuse 给去除
+        mu_pred, Sigma_pred, mu_filt, Sigma_filt, alpha, state,  A, B, C  = forward_states = \
             self.compute_forwards()
-        log_q_seq = self.get_filter_log_q_seq(mu_pred , Sigma_pred, C)
+        log_q_seq = self.get_filter_log_q_seq(mu_pred , Sigma_pred, C) #(ssm_num ,bs, seq)
+        # TODO: 这里先把 filter 计算的结果赋给 MultiKalmanFilter 的一个属性
+        self.log_likelihood =  log_q_seq
         forward_states = [mu_filt, Sigma_filt] #(seq , ssm_num ,bs , dim_l)  (seq , ssm_num , bs , dim_l , dim_l)
         # Swap batch dimension and time dimension
         forward_states[0] = tf.transpose(forward_states[0], [1, 2, 0, 3])
