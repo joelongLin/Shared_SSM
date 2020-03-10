@@ -1,3 +1,5 @@
+# -*- coding: UTF-8 -*-
+# author : joelonglin
 from gluonts.dataset.artificial._base import ComplexSeasonalTimeSeries
 from gluonts.dataset.common import ListDataset
 

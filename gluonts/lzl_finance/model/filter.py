@@ -298,11 +298,13 @@ class MultiKalmanFilter(object):
         R = tf.tile(tf.expand_dims(self.R, 0), [output_mean.shape[1], 1, 1, 1, 1]) #(ssm_num ,bs, seq , dim_l, dim_l)
         R = tf.transpose(R,[2,0,1,3,4])
         output_cov = tf.matmul(tf.matmul(C, Sigma_pred), C, transpose_b=True) + R #(seq , ssm_num ,bs, dim_z, dim_z)
+        L_output_cov = tf.linalg.cholesky(output_cov)
         # TODO: 看到其他地方都是用 0 作为 期望的，所以这里改一下
-        mvg = tfp.distributions.MultivariateNormalTriL(tf.zeros_like(output_mean) ,tf.linalg.cholesky(output_cov))
+        mvg = tfp.distributions.MultivariateNormalTriL(output_mean ,L_output_cov)
+        # mvg = MultivariateGaussian(output_mean , )
         mask = tf.squeeze(self.mask, -1)  # self.mask #(ssm_num ,bs,seq , 1) -->#(ssm_num, bs,seq)
         z_time_first = tf.transpose(self.z , [2,0,1,3]) #(seq, ssm_num ,bs, dim_z)
-        log_q_seq = mvg.log_prob(z_time_first - output_mean) #(seq , ssm_num ,bs )
+        log_q_seq = mvg.log_prob(z_time_first) #(seq , ssm_num ,bs )
         log_q_seq = tf.multiply(mask , tf.transpose(log_q_seq , [1,2,0])) #(ssm_num, bs ,seq)
         return log_q_seq
 

@@ -2,6 +2,7 @@
 #cd /home/lzl/pycharm/gluon
 #source activate gluonts
 #frozen
+gpu='2'
 reload_model=''
 target="btc,eth"
 environment='gold'
@@ -12,9 +13,9 @@ for ((i=1;i<=1;i=i+1))#! repettion
 do
     for drop_prob in 0.5
     do
-        for lr in 0.0005
+        for lr in 0.001
         do
-        python gluonts/lzl_finance/run_main.py --reload_model=$reload_model --logs_dir=$logs_dir --dropout_rate=$drop_prob --learning_rate=$lr --target=$target --environment=$environment --past_length=$past_length --pred_length=$prediction_length
+        python gluonts/lzl_finance/run_main.py --gpu=$gpu --reload_model=$reload_model --logs_dir=$logs_dir --dropout_rate=$drop_prob --learning_rate=$lr --target=$target --environment=$environment --past_length=$past_length --pred_length=$prediction_length
         done
     done
 done

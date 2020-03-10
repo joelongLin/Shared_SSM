@@ -1,20 +1,23 @@
-# -*- utf-8 -*-
+# -*- coding: UTF-8 -*-
 # author : joelonglin
-
+import os
+import sys
+sys.path.insert(0,os.getcwd())
 from gluonts.lzl_finance.model.shared_SSM import SharedSSM
 import pickle
 from gluonts.lzl_deepstate.utils.config import  reload_config
 import tensorflow as tf
 tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
-import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+
+
 
 cl = tf.app.flags
 # reload_model =  'logs/btc_eth/Dec_25_17:27:07_2019'
 reload_model = ''
 cl.DEFINE_string('reload_model' ,reload_model,'model to reload')
 cl.DEFINE_string('logs_dir','logs/btc_eth','file to print log')
-cl.DEFINE_float('dropout_rate' , 0.01 , 'Dropout regularization parameter (default: 0.1)')
+cl.DEFINE_string('gpu' , '2' , 'gpu to use')
+cl.DEFINE_float('dropout_rate' , 0.1 , 'Dropout regularization parameter (default: 0.1)')
 
 # SSM configuration
 cl.DEFINE_integer('dim_z', 1, 'Dimension of the observation in the LGSSM')
@@ -55,9 +58,6 @@ cl.DEFINE_integer('pred_length' , 5 , 'Length of the prediction horizon')
 
 # prediciton configuration
 cl.DEFINE_integer('num_eval_samples', '100', 'Number of samples paths to draw when computing predictions')
-cl.DEFINE_bool('use_feat_dynamic_real', False, 'Whether to use the ``feat_dynamic_real`` field from the data')
-cl.DEFINE_bool('use_feat_static_cat', True, 'Whether to use the a``feat_static_cat`` field from the data')
-cl.DEFINE_string('cardinality' , '2' , 'Number of values of each categorical feature.')
 
 #train configuration
 cl.DEFINE_integer('epochs' , 25 , 'Number of epochs that the network will train (default: 1).')
@@ -72,6 +72,7 @@ def main(_):
          os.chdir('gluonts/lzl_finance')
          print('change os dir : ',os.getcwd())
     config = cl.FLAGS
+    os.environ["CUDA_VISIBLE_DEVICES"] = config.gpu
     print('reload model : ' , config.reload_model)
     config = reload_config(config)
     configuration = tf.compat.v1.ConfigProto()
@@ -81,7 +82,7 @@ def main(_):
     with tf.compat.v1.Session(config=configuration) as sess:
         sharedSSM = SharedSSM(config=config, sess=sess)\
             .build_module().build_train_forward().build_predict_forward().initialize_variables()
-        # sharedSSM.train()
+        sharedSSM.train()
         # sharedSSM.predict()
         # sharedSSM.evaluate()
 

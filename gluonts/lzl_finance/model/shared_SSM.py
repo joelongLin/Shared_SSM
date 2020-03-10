@@ -1,3 +1,5 @@
+# -*- coding: UTF-8 -*-
+# author : joelonglin
 import logging
 import tensorflow as tf
 import numpy as np
@@ -22,8 +24,8 @@ from gluonts.transform.sampler import TestSplitSampler
 from gluonts.dataset.field_names import FieldName
 from .scaler import MeanScaler , NOPScaler
 from .filter import MultiKalmanFilter
+from .tool_func import weighted_average
 from .data_loader import TrainDataLoader_OnlyPast ,InferenceDataLoader_WithFuture, mergeIterOut , stackIterOut
-# 将当前序列所在的编号(相当于告诉你当前的序列信息)变成一个embedding向量
 
 class SharedSSM(object):
     def __init__(self, config , sess):
@@ -33,7 +35,6 @@ class SharedSSM(object):
 
         #导入原始的数据 , 确定了 SSM 的数量 ， env_dim 的维度，将ListData对象存放在list中
         self.load_original_data()
-
         #将导入的原始数据放入dataloader中, 使其能产生placeholders需要的内容
         self.transform_data()
         # 开始搭建有可能Input 对应的 placeholder
@@ -122,16 +123,16 @@ class SharedSSM(object):
                 time_features=time_features,
                 pred_length=self.config.pred_length,
             ),
-            AddAgeFeature(
-                target_field=FieldName.TARGET,
-                output_field=FieldName.FEAT_AGE,
-                pred_length=self.config.pred_length,
-                log_scale=True,
-            ),
-            VstackFeatures(
-                output_field=FieldName.FEAT_TIME,
-                input_fields=[FieldName.FEAT_TIME, FieldName.FEAT_AGE]
-            ),
+            # AddAgeFeature(
+            #     target_field=FieldName.TARGET,
+            #     output_field=FieldName.FEAT_AGE,
+            #     pred_length=self.config.pred_length,
+            #     log_scale=True,
+            # ),
+            # VstackFeatures(
+            #     output_field=FieldName.FEAT_TIME,
+            #     input_fields=[FieldName.FEAT_TIME, FieldName.FEAT_AGE]
+            # ),
             InstanceSplitter(
                 target_field=FieldName.TARGET,
                 is_pad_field=FieldName.IS_PAD,
@@ -238,8 +239,8 @@ class SharedSSM(object):
             # self.time_feature_lstm = tf.nn.rnn_cell.BasicLSTMCell(self.time_feature_lstm)
 
             # TODO: 关于 noise 的大小是否要 限定在 0 和 1 之间，也值得讨论
-            self.noise_emission_model = tf.layers.Dense(units=1, dtype=tf.float32, name='noise_emission')
-            self.noise_transition_model = tf.layers.Dense(units=1 , dtype=tf.float32 , name='noise_transition')
+            self.noise_emission_model = tf.layers.Dense(units=1, dtype=tf.float32, name='noise_emission' , activation=tf.nn.softmax)
+            self.noise_transition_model = tf.layers.Dense(units=1 , dtype=tf.float32 , name='noise_transition' , activation=tf.nn.softmax)
 
         with tf.variable_scope('env_exactor', initializer=tf.contrib.layers.xavier_initializer() ) :
             self.env_lstm = []
@@ -303,12 +304,12 @@ class SharedSSM(object):
         return alpha, state
 
     def build_train_forward(self):
-        env_norm , env_scale  = self.scaler.build_forward(
+        env_norm , self.env_scale  = self.scaler.build_forward(
             data = self.placeholders['past_environment'],
             observed_indicator = self.placeholders['past_env_observed']
         )#(bs ,seq , env_dim) , (bs , env_dim)
 
-        target_norm , target_scale , = self.scaler.build_forward(
+        target_norm , self.target_scale , = self.scaler.build_forward(
             data = self.placeholders['past_target'],
             observed_indicator = self.placeholders['past_target_observed']
         )#(bs , seq , ssm_num , 1) , (bs , ssm_num , 1)
@@ -316,14 +317,12 @@ class SharedSSM(object):
 
         # TODO: 这里在执行 self.placeholders['??']的时候好像容易报错
         # 对 time_feature 进行处理
-        print('begin use')
         time_rnn_out, _ = tf.nn.dynamic_rnn(
             cell=self.time_feature_lstm,
             inputs = self.placeholders['past_time_feature'],
             initial_state=None,
             dtype=tf.float32,
         )  # (bs,seq_length ,hidden_dim)
-        # time_rnn_out = tf.get_variable(shape=(32,90,40),dtype=tf.float32, trainable=True , name='rnn_out')
         eyes = tf.eye(self.config.dim_l)
         self.Q = self.noise_transition_model(time_rnn_out) #(bs, seq , 1)
         self.Q = tf.multiply(eyes , tf.expand_dims(self.Q , axis=-1))
@@ -333,7 +332,7 @@ class SharedSSM(object):
         print('Q shape : {} , R shape : {}'.format(self.Q.shape , self.R.shape))
 
         # 对 environment 进行处理
-        env_rnn_out, _ = tf.nn.dynamic_rnn(
+        env_rnn_out, self.train_env_state = tf.nn.dynamic_rnn(
             cell=self.env_lstm,
             inputs=env_norm,
             initial_state=None,
@@ -360,7 +359,7 @@ class SharedSSM(object):
                                     R=self.R,  # measurement noise
                                     Q=self.Q,  # process noise
                                     z=target_norm,  # output
-                                    z_scale = target_scale , # scale of output
+                                    z_scale = self.target_scale , # scale of output
                                     u = self.u,
                                     # mask 这里面会多一维度 (bs,seq , ssm_num ,1)
                                     mask=self.placeholders['past_target_observed'],
@@ -371,9 +370,20 @@ class SharedSSM(object):
                                     state = alpha_lstm_init
                                     )
 
-        filter, A_filter, B_filter, C_filter, _ , self.filter_loss = self.kf.filter()
-        print('建模暂时成功...')
-        # kf_elbo, log_probs, l_smooth = self.kf.get_elbo(backward_states=smooth, A= A, B=B, C=C)
+        filter, A_filter, B_filter, C_filter, _ , self.filter_ll = self.kf.filter() #(ssm_num ,bs , seq)
+        # 计算 loss 的batch情况，但是加负号
+        self.filter_batch_nll_mean = tf.math.reduce_mean(
+            tf.math.reduce_mean(-self.filter_ll, axis=-1)
+            ,axis=0
+        )#(bs,)
+        self.filter_nll_mean = tf.math.reduce_mean(
+            self.filter_batch_nll_mean
+        ) #()
+        optimizer = tf.train.AdamOptimizer(learning_rate=self.config.learning_rate)
+        gvs = optimizer.compute_gradients(self.filter_nll_mean)
+        capped_gvs = [(tf.clip_by_value(grad, -1., 10.), var) for grad, var in gvs]
+        self.train_op = optimizer.apply_gradients(capped_gvs)
+
         return self
     def build_predict_forward(self):
         return self
@@ -394,60 +404,43 @@ class SharedSSM(object):
             self.saver.restore(self.sess, params_path)
         else:
             print("Training to get new model params")
-            # fuck_you_random_feed = {
-            #     self.placeholders['past_time_feature'] : np.random.normal(size=(self.config.batch_size , self.config.past_length , self.time_dim))
-            # }
             self.sess.run(tf.global_variables_initializer())
         return self
 
     def train(self):
-        # 做training 时
-        print('\n----- training数据集 ------')
-        for batch_no, batch_data in enumerate(self.target_train_loader, start=1):
-            if batch_data != None:
-                print('第{}个batch的内容 past_target: {}  , past_time : {} , past_observed :{} ,'.format(
-                    batch_no,
-                    batch_data['past_target'].shape,
-                    batch_data['past_time_feat'].shape,
-                    batch_data['past_%s' % (FieldName.OBSERVED_VALUES)].shape
-                ))
-            else:
-                print('第', batch_no, '内容为空')
-        # 做inference 时
-        print('\n----- inference数据集 ------')
-        for batch_no, batch_data in enumerate(self.target_test_loader, start=1):
-            if batch_data != None:
-                print('第{}个batch的内容 past_target: {} , future_target: {} '
-                      ', past_time : {} , future_time : {}'
-                      ', past_observed : {} , future_observed : {}'.format(
-                    batch_no,
-                    batch_data['past_target'].shape, batch_data['future_target'].shape,
-                    batch_data['past_time_feat'].shape, batch_data['future_time_feat'].shape,
-                    batch_data['past_%s' % (FieldName.OBSERVED_VALUES)].shape,
-                    batch_data['future_%s' % (FieldName.OBSERVED_VALUES)].shape
-                ))
-            else:
-                print('第', batch_no, '内容为空')
-        exit()
         #如果导入已经有的信息,不进行训练
         if self.config.reload_model != '':
             return
         sess = self.sess
         self.writer_path = os.path.join(self.config.logs_dir,
-                                   '_'.join([self.config.dataset, str(self.config.past_length)
-                                                , str(self.config.pred_length)]))
+                                   '_'.join([
+                                               'past(%d)'%(self.config.past_length)
+                                                ,'pred(%d)'%(self.config.pred_length)
+                                                , 'u(%d)' % (self.config.pred_length)
+                                                , 'l(%d)' % (self.config.pred_length)
+                                                , 'K(%d)' % (self.config.pred_length)
+                                                , 'T(%d-%d)' % (
+                                                     self.config.time_exact_layers, self.config.time_exact_cells)
+                                                , 'E(%d-%d)' % (
+                                                     self.config.env_exact_layers, self.config.env_exact_cells)
+                                                , 'α(%d)' % (
+                                                 self.config.alpha_units)
+                                                , 'epoch(%d)' % (self.config.epochs)
+                                                , 'bs(%d)' % (self.config.batch_size)
+                                                , 'bn(%d)' % (self.config.num_batches_per_epoch)
+                                                , 'lr(%s)' % (str(self.config.learning_rate))
+                                                , 'initKF(%s)' % (str(self.config.init_kf_matrices))
+                                                , 'initCov(%s)' % (str(self.config.init_cov))
+                                                , 'dropout(%s)' % (str(self.config.dropout_rate))
+                                             ]
+                                        )
+                                    )
         if not os.path.isdir(self.writer_path):
-            os.mkdir(self.writer_path)
-        #将当前训练的参数输入到路径中
-        hyperparameter_json_path = os.path.join(self.writer_path, "hyperparameter.json")
-        config_dict = {k:self.config[k].value for k in self.config}
-        with open(hyperparameter_json_path, 'w') as f:
-            json.dump(config_dict, f, indent=4)
-
+            os.makedirs(self.writer_path)
         num_batches = self.config.num_batches_per_epoch
         best_epoch_info = {
             'epoch_no': -1,
-            'metric_value': np.Inf
+            'filter_nll': np.Inf
         }
         # vars = tf.trainable_variables()
         # for v in vars:
@@ -462,14 +455,21 @@ class SharedSSM(object):
 
             with tqdm(range(num_batches)) as it:
                 for batch_no in it :
-                    batch_input , _  = next(self.train_iter)
-                    placeholders = [self.feat_static_cat , self.past_observed_values
-                        , self.past_seasonal_indicators, self.past_time_feat, self.past_target ]
-                    feed_dict = dict(zip(placeholders,batch_input))
+                    env_batch_input  = next(self.env_train_loader)
+                    target_batch_input = next(self.target_train_loader)
+                    # print('第 ',batch_no,'的env_batch_input["past_target"]:',  env_batch_input['past_target'].shape)
+                    feed_dict = {
+                        self.placeholders['past_environment'] : env_batch_input['past_target'],
+                        self.placeholders['past_env_observed'] : env_batch_input['past_%s' % (FieldName.OBSERVED_VALUES)],
+                        self.placeholders['past_time_feature'] : env_batch_input['past_time_feat'],
+                        self.placeholders['past_target'] : target_batch_input['past_target'],
+                        self.placeholders['past_target_observed'] : target_batch_input['past_%s' % (FieldName.OBSERVED_VALUES)]
+                    }
 
-                    batch_output , _   = sess.run([self.train_result , self.train_op]
+
+                    batch_nll , _   = sess.run([self.filter_batch_nll_mean , self.train_op]
                                             , feed_dict=feed_dict)
-                    epoch_loss += np.sum(batch_output)
+                    epoch_loss += np.sum(batch_nll)
                     avg_epoch_loss = epoch_loss/((batch_no+1)*self.config.batch_size)
 
                     it.set_postfix(
@@ -495,25 +495,25 @@ class SharedSSM(object):
                 "Epoch[%d] the best of this training(before this epoch) '%d <==> %f'",
                 epoch_no,
                 best_epoch_info['epoch_no'],
-                best_epoch_info['metric_value'],
+                best_epoch_info['filter_nll'],
             )
 
-            if avg_epoch_loss < best_epoch_info['metric_value']:
-                best_epoch_info['metric_value'] = avg_epoch_loss
+            if avg_epoch_loss < best_epoch_info['filter_nll']:
+                best_epoch_info['filter_nll'] = avg_epoch_loss
                 best_epoch_info['epoch_no'] = epoch_no
                 self.save_path = os.path.join(self.writer_path , "model_params"
-                                 ,'best_{}_{}_{}'.format(self.dataset, self.past_length,self.prediction_length)
+                                 ,'best_{}_{}'.format(self.config.target.replace(',' ,'_'),
+                                                         best_epoch_info['filter_nll'])
                             )
                 self.saver.save(sess, self.save_path)
                 #'/{}_{}_best.ckpt'.format(self.dataset,epoch_no)
-
         logging.info(
             f"Loading parameters from best epoch "
             f"({best_epoch_info['epoch_no']})"
         )
 
         logging.info(
-            f"Final loss: {best_epoch_info['metric_value']} "
+            f"Final loss: {best_epoch_info['filter_nll']} "
             f"(occurred at epoch {best_epoch_info['epoch_no']})"
         )
 
@@ -521,6 +521,7 @@ class SharedSSM(object):
         logging.getLogger().info("End model training")
 
     def predict(self):
+        exit()
         sess = self.sess
         self.all_forecast_result = []
         # 如果是 训练之后接着的 predict 直接采用之前 train 产生的save_path
@@ -593,3 +594,35 @@ def evaluate_up_down(ground_truth , mc_forecast):
                        for i in range(len(mc_forecast))]
     acc = accuracy_score(ground_truth_labels , forecast_labels)
     return {'acc' : acc}
+
+# test code
+'''
+ # 做training 时
+print('\n----- training数据集 ------')
+for batch_no, batch_data in enumerate(self.target_train_loader, start=1):
+    if batch_data != None:
+        print('第{}个batch的内容 past_target: {}  , past_time : {} , past_observed :{} ,'.format(
+            batch_no,
+            batch_data['past_target'].shape,
+            batch_data['past_time_feat'].shape,
+            batch_data['past_%s' % (FieldName.OBSERVED_VALUES)].shape
+        ))
+    else:
+        print('第', batch_no, '内容为空')
+# 做inference 时
+print('\n----- inference数据集 ------')
+for batch_no, batch_data in enumerate(self.target_test_loader, start=1):
+    if batch_data != None:
+        print('第{}个batch的内容 past_target: {} , future_target: {} '
+              ', past_time : {} , future_time : {}'
+              ', past_observed : {} , future_observed : {}'.format(
+            batch_no,
+            batch_data['past_target'].shape, batch_data['future_target'].shape,
+            batch_data['past_time_feat'].shape, batch_data['future_time_feat'].shape,
+            batch_data['past_%s' % (FieldName.OBSERVED_VALUES)].shape,
+            batch_data['future_%s' % (FieldName.OBSERVED_VALUES)].shape
+        ))
+    else:
+        print('第', batch_no, '内容为空')
+exit()
+'''

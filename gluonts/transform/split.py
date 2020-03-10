@@ -169,7 +169,7 @@ class InstanceSplitter(FlatMapTransformation):
         if is_train:
             #也就是说这里面的 train 模型是默认包含了 past + pred
             # 但是我的数据集  len_target 要么为 past_length 要么为 future_length+past_length
-            # 也就是说 采样这个部分，我已经在预处理的时候，slice 了一遍
+            # 也就是说 采样这个部分，我已经在预处理的时候，slice 了一遍相当于 尽采样
             sampling_bounds = (
                 (0, len_target - self.future_length)
                 if self.pick_incomplete

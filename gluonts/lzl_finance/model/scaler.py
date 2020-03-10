@@ -1,3 +1,5 @@
+# -*- coding: UTF-8 -*-
+# author : joelonglin
 import numpy as np
 import tensorflow as tf
 

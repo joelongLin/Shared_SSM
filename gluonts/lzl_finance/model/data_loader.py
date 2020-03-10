@@ -1,3 +1,5 @@
+# -*- coding: UTF-8 -*-
+# author : joelonglin
 import numpy as np
 import random
 
@@ -243,8 +245,11 @@ class TrainDataLoader_OnlyPast(DataLoader_NoMX):
                        ):
                            yield batch
                            batch_count += 1
+                           # 这里面使用重定向 generator
                            if batch_count >= self.num_batches_per_epoch:
-                               return
+                               self._cur_iter = self.transform(
+                                   self._iterate_forever(self.dataset), is_train=False
+                               )
 
 # 因为数据预处理时放入此InferenceLoader的数据集长度永远为 past+pred, 是包含预测域信息的, 所以is_train=True
 class InferenceDataLoader_WithFuture(DataLoader_NoMX):
