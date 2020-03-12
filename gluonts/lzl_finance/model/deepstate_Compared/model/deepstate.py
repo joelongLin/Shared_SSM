@@ -14,11 +14,24 @@ from .scaler import MeanScaler,NOPScaler
 from .data_loader import DataLoader,GroundTruthLoader
 from tqdm import tqdm
 from .forecast import SampleForecast
-from .evaluation import Evaluator
 import json
-from ..utils import reload_config
 import matplotlib.pyplot as plt
-from ...time_feature import (TimeFeature ,time_features_from_frequency_str)
+from gluonts.time_feature import time_features_from_frequency_str
+from gluonts.model.forecast import SampleForecast
+from gluonts.transform import (Chain ,
+                               AddObservedValuesIndicator,
+                               AddTimeFeatures,
+                               AddAgeFeature,
+                               VstackFeatures,
+                               SwapAxes,
+                               CanonicalInstanceSplitter,
+                               InstanceSplitter)
+from gluonts.transform.sampler import TestSplitSampler
+from gluonts.dataset.field_names import FieldName
+from .scaler import MeanScaler , NOPScaler
+from gluonts.lzl_finance.model.filter import MultiKalmanFilter
+from gluonts.lzl_finance.model.data_loader import TrainDataLoader_OnlyPast ,InferenceDataLoader_WithFuture, mergeIterOut , stackIterOut
+
 
 class FeatureEmbedder(object):
     def __init__(self,cardinalities,embedding_dims):
@@ -76,31 +89,160 @@ class FeatureEmbedder(object):
         )
 
 class DeepStateNetwork(object):
+    def load_original_data(self):
+        name_prefix = 'data_process/processed_data/{}_{}_{}_{}.pkl'
+        # 导入 target 以及 environment 的数据
+        ds_names = ','.join([self.config.target, self.config.environment])
+        if self.config.slice == 'overlap':
+            series = self.config.timestep - self.config.past_length - self.config.pred_length + 1
+            print('每个数据集的序列数量为 ,', series)
+        target_path = [name_prefix.format(
+            name, '%s_DsSeries_%d' % (self.config.slice, series),
+                  'train_%d' % self.config.past_length, 'pred_%d' % self.config.pred_length,
+        ) for name in self.config.target.split(',')]
+        env_path = [name_prefix.format(
+            name, '%s_DsSeries_%d' % (self.config.slice, series),
+                  'train_%d' % self.config.past_length, 'pred_%d' % self.config.pred_length,
+        ) for name in self.config.environment.split(',')]
+
+        for path in target_path + env_path:
+            # 循环 path 的时候 需要 得到当前 path 对应的 ds_name
+            for ds_name in ds_names.split(','):
+                if ds_name in path:
+                    break
+            if not os.path.exists(path):
+                logging.info('there is no dataset [%s] , creating...' % ds_name)
+                os.system('python data_process/preprocessing.py -d={} -t={} -p={} -s={} -n={} -f={}'
+                          .format(ds_name
+                                  , self.config.past_length
+                                  , self.config.pred_length
+                                  , self.config.slice
+                                  , self.config.timestep
+                                  , self.config.freq))
+            else:
+                logging.info(' dataset [%s] was found , good~~~' % ds_name)
+        self.target_data, self.env_data = [], []
+        # 由于 target 应该都是 dim = 1 只是确定有多少个 SSM 而已
+        for target in target_path:
+            with open(target, 'rb') as fp:
+                target_ds = pickle.load(fp)
+                assert target_ds.metadata['dim'] == 1, 'target 序列的维度都应该为1'
+                self.target_data.append(target_ds)
+
+        self.ssm_num = len(self.target_data)
+        self.env_dim = 0
+        for env in env_path:
+            with open(env, 'rb') as fp:
+                env_ds = pickle.load(fp)
+                self.env_dim += env_ds.metadata['dim']
+                self.env_data.append(env_ds)
+        print('导入原始数据成功~~~')
+
+    def transform_data(self):
+        # 首先需要把 target
+        time_features = time_features_from_frequency_str(self.config.freq)
+        self.time_dim = len(time_features)
+        seasonal = CompositeISSM.seasonal_features(self.freq)
+        self.seasonal_dim = len(seasonal)
+        transformation = Chain([
+            SwapAxes(
+                input_fields=[FieldName.TARGET],
+                axes=(0, 1),
+            ),
+            AddObservedValuesIndicator(
+                target_field=FieldName.TARGET,
+                output_field=FieldName.OBSERVED_VALUES,
+            ),
+            # Unnormalized seasonal features
+            AddTimeFeatures(
+                time_features=seasonal,
+                pred_length=self.pred_length,
+                start_field=FieldName.START,
+                target_field=FieldName.TARGET,
+                output_field="seasonal_indicators",
+            ),
+            # 这里的 AddTimeFeatures，面对的ts, 维度应该为(features,T)
+            AddTimeFeatures(
+                start_field=FieldName.START,
+                target_field=FieldName.TARGET,
+                output_field=FieldName.FEAT_TIME,
+                time_features=time_features,
+                pred_length=self.config.pred_length,
+            ),
+            InstanceSplitter(
+                target_field=FieldName.TARGET,
+                is_pad_field=FieldName.IS_PAD,
+                start_field=FieldName.START,
+                forecast_start_field=FieldName.FORECAST_START,
+                train_sampler=TestSplitSampler(),
+                past_length=self.config.past_length,
+                future_length=self.config.pred_length,
+                output_NTC=True,
+                time_series_fields=[
+                    FieldName.FEAT_TIME,
+                    FieldName.OBSERVED_VALUES,
+                    "seasonal_indicators"
+                ],
+                pick_incomplete=False,
+            )
+
+        ])
+        print('已设置时间特征~~')
+        # 设置环境变量的 dataloader
+        env_train_iters = [iter(TrainDataLoader_OnlyPast(
+            dataset=self.env_data[i].train,
+            transform=transformation,
+            batch_size=self.config.batch_size,
+            num_batches_per_epoch=self.config.num_batches_per_epoch,
+        )) for i in range(len(self.env_data))]
+        env_test_iters = [iter(InferenceDataLoader_WithFuture(
+            dataset=self.env_data[i].test,
+            transform=transformation,
+            batch_size=self.config.batch_size,
+        )) for i in range(len(self.env_data))]
+        target_train_iters = [iter(TrainDataLoader_OnlyPast(
+            dataset=self.target_data[i].train,
+            transform=transformation,
+            batch_size=self.config.batch_size,
+            num_batches_per_epoch=self.config.num_batches_per_epoch,
+        )) for i in range(len(self.target_data))]
+        target_test_iters = [iter(InferenceDataLoader_WithFuture(
+            dataset=self.target_data[i].test,
+            transform=transformation,
+            batch_size=self.config.batch_size,
+        )) for i in range(len(self.target_data))]
+
+        self.env_train_loader = mergeIterOut(env_train_iters,
+                                             fields=[FieldName.OBSERVED_VALUES, FieldName.FEAT_TIME, FieldName.TARGET],
+                                             include_future=True)
+        self.target_train_loader = stackIterOut(target_train_iters,
+                                                fields=[FieldName.OBSERVED_VALUES, FieldName.FEAT_TIME,
+                                                        FieldName.TARGET],
+                                                dim=0,
+                                                include_future=False)
+        self.env_test_loader = mergeIterOut(env_test_iters,
+                                            fields=[FieldName.OBSERVED_VALUES, FieldName.FEAT_TIME, FieldName.TARGET],
+                                            include_future=True)
+        self.target_test_loader = stackIterOut(target_test_iters,
+                                               fields=[FieldName.OBSERVED_VALUES, FieldName.FEAT_TIME,
+                                                       FieldName.TARGET],
+                                               dim=0,
+                                               include_future=True)
+
     def __init__(self, config , sess):
         self.config = config
         self.sess = sess
 
         # dataset configuration
-        self.dataset = config.dataset
         self.freq = config.freq
         self.past_length = config.past_length
-        self.prediction_length = config.prediction_length
+        self.pred_length = config.pred_length
         self.add_trend = config.add_trend
 
 
         # 放入数据集
-        with open('data/train_{}_{}_{}.pkl'.format(self.dataset , self.past_length,self.prediction_length) , 'rb') as fp:
-            self.train_data = pickle.load(fp)
-        with open('data/test_{}_{}_{}.pkl'.format(self.dataset , self.past_length,self.prediction_length) , 'rb') as fp:
-            self.test_data = pickle.load(fp)
-        shape_list = []
-        for input in self.train_data[0]:
-            shape_list.append(input.shape)
-
-        # 将数据集放入 DataLoader 中产生一个 iterator
-        self.train_iter =  DataLoader(self.train_data, self.config).data_iterator(is_train=True)
-        self.test_iter = DataLoader(self.test_data , self.config).data_iterator(is_train=False)
-
+        self.load_original_data()
+        self.transform_data()
 
         # network configuration
         self.batch_size = config.batch_size
@@ -125,13 +267,13 @@ class DeepStateNetwork(object):
 
 
         # 开始搭建有可能Input 对应的 placeholder
-        self.feat_static_cat = tf.placeholder(dtype=tf.float32 , shape=[self.batch_size , shape_list[0][0]])
-        self.past_observed_values = tf.placeholder(dtype=tf.float32 , shape=[self.batch_size ,self.past_length, shape_list[1][1]])
-        self.past_seasonal_indicators = tf.placeholder(dtype=tf.float32 , shape = [self.batch_size,self.past_length , shape_list[2][1]])
-        self.past_time_feat = tf.placeholder(dtype=tf.float32 , shape =[self.batch_size ,self.past_length, shape_list[3][1]])
-        self.past_target = tf.placeholder(dtype=tf.float32 , shape =[self.batch_size ,self.past_length, shape_list[4][1]])
-        self.future_seasonal_indicators = tf.placeholder(dtype=tf.float32 , shape=[self.batch_size ,self.prediction_length, shape_list[2][1]])
-        self.future_time_feat = tf.placeholder(dtype=tf.float32 , shape=[self.batch_size ,self.prediction_length, shape_list[3][1]])
+        self.feat_static_cat = tf.placeholder(dtype=tf.float32,shape=[self.batch_size , 1])
+        self.past_observed_values = tf.placeholder(dtype=tf.float32 , shape=[self.batch_size ,self.past_length, 1])
+        self.past_seasonal_indicators = tf.placeholder(dtype=tf.float32 , shape = [self.batch_size,self.past_length , self.seasonal_dim])
+        self.past_time_feat = tf.placeholder(dtype=tf.float32 , shape =[self.batch_size ,self.past_length, self.time_dim])
+        self.past_target = tf.placeholder(dtype=tf.float32 , shape =[self.batch_size ,self.past_length, 1])
+        self.future_seasonal_indicators = tf.placeholder(dtype=tf.float32 , shape=[self.batch_size ,self.pred_length, self.seasonal_dim])
+        self.future_time_feat = tf.placeholder(dtype=tf.float32 , shape=[self.batch_size ,self.pred_length, self.time_dim])
 
     def build_module(self):
         with tf.variable_scope('deepstate', initializer=tf.contrib.layers.xavier_initializer() , reuse=tf.AUTO_REUSE):
@@ -140,7 +282,7 @@ class DeepStateNetwork(object):
             self.prior_cov_diag_model = tf.layers.Dense(
                 units=self.issm.latent_dim(),
                 dtype=tf.float32,
-                activation=tf.keras.activations.sigmoid,  # TODO: puot explicit upper bound
+                activation=tf.keras.activations.sigmoid,
                 name='prior_cov'
             )
 
@@ -336,7 +478,7 @@ class DeepStateNetwork(object):
             feat_static_cat=self.feat_static_cat,
             seasonal_indicators=self.future_seasonal_indicators,
             time_feat=self.future_time_feat,
-            length=self.prediction_length,
+            length=self.pred_length,
             lstm_begin_state=lstm_state,
             prior_mean=final_mean,
             prior_cov=final_cov,
@@ -347,8 +489,8 @@ class DeepStateNetwork(object):
         )# (num_samples, batch_size, seq_length, obs_dim)
 
 
-        # (batch_size, num_samples, prediction_length, target_dim)
-        #  squeeze last axis in the univariate case (batch_size, num_samples, prediction_length)
+        # (batch_size, num_samples, pred_length, target_dim)
+        #  squeeze last axis in the univariate case (batch_size, num_samples, pred_length)
         if self.univariate:
             self.predict_result = tf.squeeze(tf.transpose(samples , [1, 0, 2, 3]),axis=3)
         else:
@@ -381,27 +523,30 @@ class DeepStateNetwork(object):
         if self.config.reload_model != '':
             return
         sess = self.sess
-        self.writer_path = os.path.join(self.config.logs_dir,
-                                   '_'.join([self.config.dataset, str(self.config.past_length)
-                                                , str(self.config.prediction_length)]))
-        if not os.path.isdir(self.writer_path):
-            os.mkdir(self.writer_path)
-        #将当前训练的参数输入到路径中
-        hyperparameter_json_path = os.path.join(self.writer_path, "hyperparameter.json")
-        config_dict = {k:self.config[k].value for k in self.config}
-        with open(hyperparameter_json_path, 'w') as f:
-            json.dump(config_dict, f, indent=4)
+        self.log_path = os.path.join(self.config.logs_dir,
+                                   '_'.join([
+                                            'freq(%s)' % (self.config.freq)
+                                            ,'past(%d)'%(self.config.past_length)
+                                            ,'pred(%d)'%(self.config.pred_length)
+                                            , 'LSTM(%d-%d)' % (
+                                                self.config.num_layers, self.config.num_cells)
+                                            ,'trend(%s)' %(str(self.config.add_trend))
+                                            , 'epoch(%d)' % (self.config.epochs)
+                                            , 'bs(%d)' % (self.config.batch_size)
+                                            , 'bn(%d)' % (self.config.num_batches_per_epoch)
+                                            , 'lr(%s)' % (str(self.config.learning_rate))
+                                            , 'dropout(%s)' % (str(self.config.dropout_rate))
+                                     ])
+                                   )
+        if not os.path.isdir(self.log_path):
+            os.makedirs(self.log_path)
 
         num_batches = self.config.num_batches_per_epoch
         best_epoch_info = {
             'epoch_no': -1,
             'metric_value': np.Inf
         }
-        # vars = tf.trainable_variables()
-        # for v in vars:
-        #     print(v)
-        # exit()
-
+        train_plot_points = {}
         for epoch_no in range(self.config.epochs):
             #执行一系列操作
             #产生新的数据集
@@ -410,16 +555,32 @@ class DeepStateNetwork(object):
 
             with tqdm(range(num_batches)) as it:
                 for batch_no in it :
-                    batch_input , _  = next(self.train_iter)
-                    placeholders = [self.feat_static_cat , self.past_observed_values
-                        , self.past_seasonal_indicators, self.past_time_feat, self.past_target ]
-                    feed_dict = dict(zip(placeholders,batch_input))
+                    env_batch_input = next(self.env_train_loader)
+                    target_batch_input = next(self.target_train_loader)
+                    # # print('第 ',batch_no,'的env_batch_input["past_target"]:',  env_batch_input['past_target'].shape)
+                    # feed_dict = {
+                    #     self.placeholders['past_environment']: env_batch_input['past_target'],
+                    #     self.placeholders['past_env_observed']: env_batch_input[
+                    #         'past_%s' % (FieldName.OBSERVED_VALUES)],
+                    #     self.placeholders['past_time_feature']: env_batch_input['past_time_feat'],
+                    #     self.placeholders['past_target']: target_batch_input['past_target'],
+                    #     self.placeholders['past_target_observed']: target_batch_input[
+                    #         'past_%s' % (FieldName.OBSERVED_VALUES)]
+                    # }
+                    for i in range(self.ssm_num):
+                        feed_dict = {
+                            self.past_seasonal_indicators: env_batch_input['past_%s' % ('seasonal_indicators')],
+                            self.past_time_feat: env_batch_input['past_time_feat'],
+                            self.feat_static_cat : i * np.ones(dtype=np.float32 , shape=(self.config.batch_size ,1)),
+                            self.past_observed_values : target_batch_input['past_%s' % (FieldName.OBSERVED_VALUES)][i] ,
+                            self.past_target : target_batch_input['past_target'][i]}
 
-                    batch_output , _   = sess.run([self.train_result , self.train_op]
-                                            , feed_dict=feed_dict)
-                    epoch_loss += np.sum(batch_output)
-                    avg_epoch_loss = epoch_loss/((batch_no+1)*self.config.batch_size)
+                        batch_output , _   = sess.run([self.train_result , self.train_op]
+                                                , feed_dict=feed_dict)
+                        epoch_loss += np.sum(batch_output)
+                        avg_epoch_loss = epoch_loss/((batch_no+1)*self.config.batch_size*(i+1))
 
+                    avg_epoch_loss = avg_epoch_loss
                     it.set_postfix(
                         ordered_dict={
                             "avg_epoch_loss":  avg_epoch_loss
@@ -427,6 +588,7 @@ class DeepStateNetwork(object):
                         refresh=False,
                     )
             toc = time.time()
+            train_plot_points[epoch_no] = avg_epoch_loss
             logging.info(
                 "Epoch[%d] Elapsed time %.3f seconds",
                 epoch_no,
@@ -449,12 +611,14 @@ class DeepStateNetwork(object):
             if avg_epoch_loss < best_epoch_info['metric_value']:
                 best_epoch_info['metric_value'] = avg_epoch_loss
                 best_epoch_info['epoch_no'] = epoch_no
-                self.save_path = os.path.join(self.writer_path , "model_params"
-                                 ,'best_{}_{}_{}'.format(self.dataset, self.past_length,self.prediction_length)
-                            )
+                self.save_path = os.path.join(self.log_path, "model_params"
+                                              ,'best_{}_epoch({})_nll({})'.format(self.config.target.replace(',' ,'_'),
+                                                         epoch_no,
+                                                         best_epoch_info['metric_value'])
+                                              )
                 self.saver.save(sess, self.save_path)
                 #'/{}_{}_best.ckpt'.format(self.dataset,epoch_no)
-
+        plot_train_result(train_plot_points, self.log_path)
         logging.info(
             f"Loading parameters from best epoch "
             f"({best_epoch_info['epoch_no']})"
@@ -525,12 +689,12 @@ class DeepStateNetwork(object):
             forecast = self.all_forecast_result
         finance_eval = evaluate_up_down(ground_truth ,forecast)
         if hasattr(self , 'writer_path'):
-            eval_path = os.path.join(self.writer_path, "metrics.json")
+            eval_path = os.path.join(self.log_path, "metrics.json")
         else:
             eval_path = os.path.join(self.config.reload_model , "metrics.json")
         with open(eval_path, 'w') as f:
             json.dump(finance_eval, f, indent=4)
-        # plot_length = self.config.past_length + self.config.prediction_length
+        # plot_length = self.config.past_length + self.config.pred_length
         # for i in range(321):#对于electricity来说，总共由321列
         #     plot_prob_forecasts(ground_truth[i] , forecast[i] ,self.config.dataset,i,plot_length)
         #
@@ -554,6 +718,20 @@ def plot_prob_forecasts(ts_entry, forecast_entry,ds_name ,no ,plot_length):
     plt.grid(which="both")
     plt.legend(legend, loc="upper left")
     plt.savefig('pic/{}_result/result_output_tf_{}.png'.format(ds_name,no))
+    plt.close(fig)
+
+def plot_train_result(
+        result:dict,
+        path: str
+):
+    epoches = list(result.keys())
+    loss = list(result.values())
+    fig = plt.figure()
+    ax = fig.add_subplot(1, 1, 1)
+    ax.plot(epoches, loss, color='tab:green' , marker='o')
+    ax.set(xlabel='epoch (s)', ylabel='filter negative log likelihood',
+           title='epoch information when training')
+    plt.savefig(os.path.join(path , 'train.png'))
     plt.close(fig)
 
 def evaluate_up_down(ground_truth , mc_forecast):

@@ -1,4 +1,4 @@
-.idea/*
+.idea/
 
 # some data file of the project
 gluonts/lzl_deepstate/logs/

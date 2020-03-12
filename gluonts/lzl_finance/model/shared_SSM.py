@@ -9,6 +9,8 @@ import os
 from tqdm import tqdm
 import json
 import logging
+import matplotlib
+matplotlib.use('Agg') # 用这句话避免 xshell 调参时，出现X11转发
 import matplotlib.pyplot as plt
 from gluonts.time_feature import time_features_from_frequency_str
 from gluonts.model.forecast import SampleForecast
@@ -123,16 +125,6 @@ class SharedSSM(object):
                 time_features=time_features,
                 pred_length=self.config.pred_length,
             ),
-            # AddAgeFeature(
-            #     target_field=FieldName.TARGET,
-            #     output_field=FieldName.FEAT_AGE,
-            #     pred_length=self.config.pred_length,
-            #     log_scale=True,
-            # ),
-            # VstackFeatures(
-            #     output_field=FieldName.FEAT_TIME,
-            #     input_fields=[FieldName.FEAT_TIME, FieldName.FEAT_AGE]
-            # ),
             InstanceSplitter(
                 target_field=FieldName.TARGET,
                 is_pad_field=FieldName.IS_PAD,
@@ -412,13 +404,14 @@ class SharedSSM(object):
         if self.config.reload_model != '':
             return
         sess = self.sess
-        self.writer_path = os.path.join(self.config.logs_dir,
+        self.log_path = os.path.join(self.config.logs_dir,
                                    '_'.join([
+                                                'freq(%s)'%(self.config.freq),
                                                'past(%d)'%(self.config.past_length)
                                                 ,'pred(%d)'%(self.config.pred_length)
-                                                , 'u(%d)' % (self.config.pred_length)
-                                                , 'l(%d)' % (self.config.pred_length)
-                                                , 'K(%d)' % (self.config.pred_length)
+                                                , 'u(%d)' % (self.config.dim_u)
+                                                , 'l(%d)' % (self.config.dim_l)
+                                                , 'K(%d)' % (self.config.K)
                                                 , 'T(%d-%d)' % (
                                                      self.config.time_exact_layers, self.config.time_exact_cells)
                                                 , 'E(%d-%d)' % (
@@ -434,18 +427,15 @@ class SharedSSM(object):
                                                 , 'dropout(%s)' % (str(self.config.dropout_rate))
                                              ]
                                         )
-                                    )
-        if not os.path.isdir(self.writer_path):
-            os.makedirs(self.writer_path)
+                                     )
+        if not os.path.isdir(self.log_path):
+            os.makedirs(self.log_path)
         num_batches = self.config.num_batches_per_epoch
         best_epoch_info = {
             'epoch_no': -1,
             'filter_nll': np.Inf
         }
-        # vars = tf.trainable_variables()
-        # for v in vars:
-        #     print(v)
-        # exit()
+        train_plot_points = {}
 
         for epoch_no in range(self.config.epochs):
             #执行一系列操作
@@ -479,6 +469,8 @@ class SharedSSM(object):
                         refresh=False,
                     )
             toc = time.time()
+            #将本epoch训练的结果添加到起来
+            train_plot_points[epoch_no] = avg_epoch_loss
             logging.info(
                 "Epoch[%d] Elapsed time %.3f seconds",
                 epoch_no,
@@ -497,16 +489,18 @@ class SharedSSM(object):
                 best_epoch_info['epoch_no'],
                 best_epoch_info['filter_nll'],
             )
-
+            #如果当前 epoch 的结果比之前的要好，则立刻取代，保存
             if avg_epoch_loss < best_epoch_info['filter_nll']:
+                del_model_params(self.log_path)
                 best_epoch_info['filter_nll'] = avg_epoch_loss
                 best_epoch_info['epoch_no'] = epoch_no
-                self.save_path = os.path.join(self.writer_path , "model_params"
-                                 ,'best_{}_{}'.format(self.config.target.replace(',' ,'_'),
+                self.save_path = os.path.join(self.log_path, "model_params"
+                                              ,'best_{}_epoch({})_nll({})'.format(self.config.target.replace(',' ,'_'),
+                                                         epoch_no,
                                                          best_epoch_info['filter_nll'])
-                            )
+                                              )
                 self.saver.save(sess, self.save_path)
-                #'/{}_{}_best.ckpt'.format(self.dataset,epoch_no)
+        plot_train_result(train_plot_points , self.log_path)
         logging.info(
             f"Loading parameters from best epoch "
             f"({best_epoch_info['epoch_no']})"
@@ -574,19 +568,33 @@ class SharedSSM(object):
     def evaluate(self, forecast=None):
         pass
 
+def del_model_params(path):
+    '''
+    :param path:  该组参数组的主目录
+    :return:  删除之前epoch的参数文件
+    '''
+    path = os.path.join(path,'model_params')
+    if not os.path.isdir(path):
+        return
+    for files in os.listdir(path):
+        if files.endswith(".data-00000-of-00001") \
+                or files.endswith(".index") \
+                or files.endswith(".meta"):
+            os.remove(os.path.join(path,files))
 
-def plot_prob_forecasts(ts_entry, forecast_entry,ds_name ,no ,plot_length):
-    prediction_intervals = (50.0, 90.0)
-    legend = ["observations", "median prediction"] + [f"{k}% prediction interval" for k in prediction_intervals][::-1]
-
-    fig, ax = plt.subplots(1, 1, figsize=(10, 7))
-    ts_entry[-plot_length:].plot(ax=ax)  # plot the time series
-    forecast_entry.plot(prediction_intervals=prediction_intervals, color='g')
-    plt.grid(which="both")
-    plt.legend(legend, loc="upper left")
-    plt.savefig('pic/{}_result/result_output_tf_{}.png'.format(ds_name,no))
+def plot_train_result(
+        result:dict,
+        path: str
+):
+    epoches = list(result.keys())
+    loss = list(result.values())
+    fig = plt.figure()
+    ax = fig.add_subplot(1, 1, 1)
+    ax.plot(epoches, loss, color='tab:blue' , marker='D')
+    ax.set(xlabel='epoch (s)', ylabel='filter negative log likelihood',
+           title='epoch information when training')
+    plt.savefig(os.path.join(path , 'train.png'))
     plt.close(fig)
-
 def evaluate_up_down(ground_truth , mc_forecast):
     # 0代表跌 1代表涨
     ground_truth_labels = [1 if truth.iloc[-1].values[0] > truth.iloc[-2].values[0] else 0 for truth in ground_truth]

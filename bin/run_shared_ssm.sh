@@ -2,20 +2,26 @@
 #cd /home/lzl/pycharm/gluon
 #source activate gluonts
 #frozen
-gpu='2'
+gpu='3'
 reload_model=''
 target="btc,eth"
 environment='gold'
 logs_dir="logs/btc_eth"
-past_length='90'
-prediction_length='5'
+past_length='7'
+prediction_length='1'
+batch_size='32'
+batch_num='30'
+epochs='50'
 for ((i=1;i<=1;i=i+1))#! repettion
 do
     for drop_prob in 0.5
     do
         for lr in 0.001
         do
-        python gluonts/lzl_finance/run_main.py --gpu=$gpu --reload_model=$reload_model --logs_dir=$logs_dir --dropout_rate=$drop_prob --learning_rate=$lr --target=$target --environment=$environment --past_length=$past_length --pred_length=$prediction_length
+        python gluonts/lzl_finance/run_main.py --gpu=$gpu --reload_model=$reload_model --logs_dir=$logs_dir \
+        --dropout_rate=$drop_prob --learning_rate=$lr --target=$target --environment=$environment \
+        --past_length=$past_length --pred_length=$prediction_length --batch_size=$batch_size \
+        --num_batches_per_epoch=$batch_num --epochs=$epochs
         done
     done
 done
