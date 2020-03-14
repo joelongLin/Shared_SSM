@@ -190,7 +190,6 @@ class SeasonalityISSM(LevelISSM):
             )  #output(bath_size , length , 1 , latent_dim)
 
     def innovation_coeff(self, seasonal_indicators) :
-        # seasonal_indicators = tf.modulo(seasonal_indicators - 1, self.latent_dim)
         return tf.squeeze(
             tf.one_hot(
                 tf.dtypes.cast(seasonal_indicators,dtype=tf.int32)

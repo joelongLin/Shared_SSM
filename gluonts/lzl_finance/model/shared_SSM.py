@@ -3,6 +3,7 @@
 import logging
 import tensorflow as tf
 import numpy as np
+import pandas as pd
 import pickle
 import time
 import os
@@ -28,6 +29,56 @@ from .scaler import MeanScaler , NOPScaler
 from .filter import MultiKalmanFilter
 from .tool_func import weighted_average
 from .data_loader import TrainDataLoader_OnlyPast ,InferenceDataLoader_WithFuture, mergeIterOut , stackIterOut
+
+def plot_train_result(
+        result:dict,
+        path: str
+):
+    epoches = list(result.keys())
+    loss = list(result.values())
+    fig = plt.figure()
+    ax = fig.add_subplot(1, 1, 1)
+    ax.plot(epoches, loss, color='tab:blue' , marker='D')
+    ax.set(xlabel='epoch (s)', ylabel='filter negative log likelihood',
+           title='epoch information when training')
+    plt.savefig(os.path.join(path , 'train.png'))
+    plt.close(fig)
+
+def plot_train_pred(path, data, pred, batch, epoch, plot_num, time_start, freq):
+    '''
+    :param path: 存放图片的地址
+    :param data: 真实数据 #(ssm_num , bs , seq , 1)
+    :param pred: 模型训练时预测的 每个时间步的 期望
+    :param batch: 辨明当前的
+    :param epoch:当前的epoch
+    :param plot_num: 当前情况下需要输出的图片数量
+    :param time_start : 绘图的初始时间
+    :param freq : 当前的时间间隔
+    :return:
+    '''
+    #先把多余的维度去除
+    data = np.squeeze(data , -1)
+    pred = np.squeeze(pred ,-1)
+    root_path = os.path.join(path , 'train_pred_pic')
+    #当前采样
+    ssm_no = np.random.choice(np.arange(data.shape[0]) , 1)[0] # 如果不进行slice会导致后面值多一维度
+    samples_no = np.random.choice(np.arange(data.shape[1]) , plot_num)
+    current_dir = os.path.join(root_path, 'epoch({})'.format(epoch))
+    if not os.path.isdir(current_dir):
+        os.makedirs(current_dir)
+    for sample in samples_no:
+        pic_name = os.path.join(current_dir , 'ssm_no({})_batch_no({})_sample({})'.format(ssm_no,batch,sample))
+        time_range = pd.date_range(time_start[sample], periods=data.shape[2], freq=freq)
+        s1 = data[ssm_no , sample]
+        s2 = pred[ssm_no , sample]
+        fig = plt.figure(figsize = (40,30))
+        ax = fig.add_subplot(1, 1, 1)
+        ax.plot(time_range , s1 , linestyle = '-' , color = 'tab:green')
+        ax.plot(time_range , s2 , linestyle = '-.' , color = 'tab:blue')
+        plt.savefig(pic_name)
+        plt.close(fig)
+    pass
+
 
 class SharedSSM(object):
     def __init__(self, config , sess):
@@ -362,8 +413,9 @@ class SharedSSM(object):
                                     state = alpha_lstm_init
                                     )
 
-        filter, A_filter, B_filter, C_filter, _ , self.filter_ll = self.kf.filter() #(ssm_num ,bs , seq)
+        filter, A_filter, B_filter, C_filter, _ , self.filter_ll  , pred_mean = self.kf.filter() #(ssm_num ,bs , seq) #(ssm_num, bs , seq ,1)
         # 计算 loss 的batch情况，但是加负号
+        self.pred_mean = tf.math.multiply(pred_mean , tf.expand_dims(self.target_scale , 1))
         self.filter_batch_nll_mean = tf.math.reduce_mean(
             tf.math.reduce_mean(-self.filter_ll, axis=-1)
             ,axis=0
@@ -459,6 +511,11 @@ class SharedSSM(object):
 
                     batch_nll , _   = sess.run([self.filter_batch_nll_mean , self.train_op]
                                             , feed_dict=feed_dict)
+                    # 将训练时的 output_mean 和 真实值进行比对 #(ssm_num ,bs , seq)
+                    batch_pred = sess.run(self.pred_mean, feed_dict=feed_dict)
+                    # plot_train_pred(path=self.log_path, data=target_batch_input['past_target'], pred=batch_pred,
+                    #                 batch=batch_no, epoch=epoch_no, plot_num=4
+                    #                 , time_start=target_batch_input['start'], freq=self.config.freq)
                     epoch_loss += np.sum(batch_nll)
                     avg_epoch_loss = epoch_loss/((batch_no+1)*self.config.batch_size)
 
@@ -582,19 +639,6 @@ def del_model_params(path):
                 or files.endswith(".meta"):
             os.remove(os.path.join(path,files))
 
-def plot_train_result(
-        result:dict,
-        path: str
-):
-    epoches = list(result.keys())
-    loss = list(result.values())
-    fig = plt.figure()
-    ax = fig.add_subplot(1, 1, 1)
-    ax.plot(epoches, loss, color='tab:blue' , marker='D')
-    ax.set(xlabel='epoch (s)', ylabel='filter negative log likelihood',
-           title='epoch information when training')
-    plt.savefig(os.path.join(path , 'train.png'))
-    plt.close(fig)
 def evaluate_up_down(ground_truth , mc_forecast):
     # 0代表跌 1代表涨
     ground_truth_labels = [1 if truth.iloc[-1].values[0] > truth.iloc[-2].values[0] else 0 for truth in ground_truth]

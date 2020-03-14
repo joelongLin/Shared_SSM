@@ -285,12 +285,13 @@ class MultiKalmanFilter(object):
 
         return kf_elbo, log_probs, l_smooth
 
-    def get_filter_log_q_seq(self, mu_pred, Sigma_pred,C):
+    def get_filter_log_p_seq(self, mu_pred, Sigma_pred, C):
         '''
         :param mu_pred:  #(seq , ssm_num , bs , dim_l)
         :param Sigma_pred:  #(seq, ssm_num , bs , dim_l, dim_l)
         :param C : #(seq, ssm_num ,bs, dim_z , dim_l)
-        :return: log_q_seq  #(seq , ssm_num , bs)
+        :return: log_q_seq  #(ssm_num , bs , seq)
+                 output_mean #(seq , ssm_num ,bs)
         '''
         # self.z  #(ssm_num ,bs, seq, dim_z)
         # C_t  l_(t | t-1)
@@ -306,21 +307,22 @@ class MultiKalmanFilter(object):
         z_time_first = tf.transpose(self.z , [2,0,1,3]) #(seq, ssm_num ,bs, dim_z)
         log_q_seq = mvg.log_prob(z_time_first) #(seq , ssm_num ,bs )
         log_q_seq = tf.multiply(mask , tf.transpose(log_q_seq , [1,2,0])) #(ssm_num, bs ,seq)
-        return log_q_seq
+        output_mean = tf.transpose(output_mean , [1,2,0,3])
+        return log_q_seq , output_mean
 
     def filter(self):
         #  暂时把compute forward 函数里面的reuse 给去除
         mu_pred, Sigma_pred, mu_filt, Sigma_filt, alpha, state,  A, B, C  = forward_states = \
             self.compute_forwards()
-        log_q_seq = self.get_filter_log_q_seq(mu_pred , Sigma_pred, C) #(ssm_num ,bs, seq)
+        log_p_seq , output_mean = self.get_filter_log_p_seq(mu_pred, Sigma_pred, C) #(ssm_num ,bs, seq)
         # TODO: 这里先把 filter 计算的结果赋给 MultiKalmanFilter 的一个属性
-        self.log_likelihood =  log_q_seq
+        self.log_likelihood =  log_p_seq
         forward_states = [mu_filt, Sigma_filt] #(seq , ssm_num ,bs , dim_l)  (seq , ssm_num , bs , dim_l , dim_l)
         # Swap batch dimension and time dimension
         forward_states[0] = tf.transpose(forward_states[0], [1, 2, 0, 3])
         forward_states[1] = tf.transpose(forward_states[1], [1, 2, 0, 3 , 4])
         return tuple(forward_states), tf.transpose(A, [1, 2, 0, 3, 4]), tf.transpose(B, [1, 2, 0, 3, 4]), \
-               tf.transpose(C, [1, 2, 0, 3, 4]), tf.transpose(alpha, [1, 2, 0, 3]) , log_q_seq
+               tf.transpose(C, [1, 2, 0, 3, 4]), tf.transpose(alpha, [1, 2, 0, 3]) , log_p_seq , output_mean
 
     def smooth(self):
         backward_states, A, B, C, alpha = self.compute_backwards(self.compute_forwards())
