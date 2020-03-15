@@ -217,7 +217,7 @@ def createGluontsDataset(data_name):
           '(切片之后)每个数据集样本数目为：'  , dataset.metadata['sample_size'])
 
 if __name__ == '__main__':
-    if 'lzl_finance' in os.getcwd():
+    if 'lzl_shared_ssm' in os.getcwd():
         if 'data_process' in os.getcwd():
             os.chdir('..')
         print('------当前与处理数据的路径：', os.getcwd() ,'-------')

@@ -6,7 +6,7 @@ import numpy as np
 
 class MultiKalmanFilter(object):
     """
-    This class defines a Kalman Filter (Linear Gaussian State Space model), possibly with a dynamics parameter
+    This class defines a Kalman Filter (Linear Gaussian State Space models), possibly with a dynamics parameter
     network alpha.
     """
 

@@ -3,7 +3,7 @@
 import os
 import sys
 sys.path.insert(0,os.getcwd())
-from gluonts.lzl_finance.model.shared_SSM import SharedSSM
+from gluonts.lzl_shared_ssm.models.shared_SSM import SharedSSM
 import pickle
 from gluonts.lzl_deepstate.utils.config import  reload_config
 import tensorflow as tf
@@ -14,17 +14,17 @@ tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 cl = tf.app.flags
 # reload_model =  'logs/btc_eth/Dec_25_17:27:07_2019'
 reload_model = ''
-cl.DEFINE_string('reload_model' ,reload_model,'model to reload')
+cl.DEFINE_string('reload_model' ,reload_model,'models to reload')
 cl.DEFINE_string('logs_dir','logs/btc_eth','file to print log')
-cl.DEFINE_string('gpu' , '2' , 'gpu to use')
+cl.DEFINE_string('gpu' , '3' , 'gpu to use')
 cl.DEFINE_float('dropout_rate' , 0.1 , 'Dropout regularization parameter (default: 0.1)')
 cl.DEFINE_float('learning_rate' , 0.001 , 'Initial learning rate')
 
 #train configuration
-cl.DEFINE_integer('epochs' , 50 , 'Number of epochs that the network will train (default: 1).')
+cl.DEFINE_integer('epochs' , 30 , 'Number of epochs that the network will train (default: 1).')
 cl.DEFINE_bool('shuffle' , False ,'whether to shuffle the train dataset')
 cl.DEFINE_integer('batch_size' ,  32 , 'Numbere of examples in each batch')
-cl.DEFINE_integer('num_batches_per_epoch' , 60 , 'Numbers of batches at each epoch')
+cl.DEFINE_integer('num_batches_per_epoch' , 13 , 'Numbers of batches at each epoch')
 
 
 # SSM configuration
@@ -38,7 +38,6 @@ cl.DEFINE_integer('K', 3, 'Number of filters in mixture')
 # cl.DEFINE_float('noise_transition', 0.08, 'Noise level for the process noise matrix')
 cl.DEFINE_float('init_kf_matrices', 0.05, 'initialize the B and C matrix')
 cl.DEFINE_float('init_cov', 10.0, 'Variance of the initial state')
-cl.DEFINE_bool('add_trend' , True , 'Flag to indicate whether to include trend component in the SSM')
 
 # shared time_feature network configuration
 cl.DEFINE_integer('time_exact_layers' ,2,'num of lstm cell layers')
@@ -72,12 +71,12 @@ cl.DEFINE_integer('num_eval_samples', '100', 'Number of samples paths to draw wh
 
 
 def main(_):
-    if ('/lzl_finance' not in os.getcwd()):
-         os.chdir('gluonts/lzl_finance')
+    if ('/lzl_shared_ssm' not in os.getcwd()):
+         os.chdir('gluonts/lzl_shared_ssm')
          print('change os dir : ',os.getcwd())
     config = cl.FLAGS
     os.environ["CUDA_VISIBLE_DEVICES"] = config.gpu
-    print('reload model : ' , config.reload_model)
+    print('reload models : ' , config.reload_model)
     config = reload_config(config)
     configuration = tf.compat.v1.ConfigProto()
     configuration.gpu_options.allow_growth = True

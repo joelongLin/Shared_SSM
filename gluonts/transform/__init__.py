@@ -17,6 +17,7 @@ __all__ = [
     "AddConstFeature",
     "AddObservedValuesIndicator",
     "AddTimeFeatures",
+    "AddInitTimeFeature",
     "AdhocTransform",
     "AsNumpyArray",
     "BucketInstanceSampler",
@@ -81,6 +82,7 @@ from .feature import (
     AddObservedValuesIndicator,
     AddConstFeature,
     AddTimeFeatures,
+    AddInitTimeFeature,
     AddAgeFeature,
 )
 

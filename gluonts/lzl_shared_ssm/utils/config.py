@@ -5,7 +5,7 @@ import os
 import json
 
 def reload_config(FLAGS):
-    # If we are reloading a model, overwrite the flags
+    # If we are reloading a models, overwrite the flags
     if FLAGS.reload_model is not '':
         with open(os.path.join(FLAGS.reload_model, 'hyperparameter.json')) as data_file:
             config_dict = json.load(data_file)

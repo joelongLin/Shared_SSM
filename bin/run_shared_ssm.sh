@@ -18,7 +18,7 @@ do
     do
         for lr in 0.001
         do
-        python gluonts/lzl_finance/run_main.py --gpu=$gpu --reload_model=$reload_model --logs_dir=$logs_dir \
+        python gluonts/lzl_shared_ssm/run_main.py --gpu=$gpu --reload_model=$reload_model --logs_dir=$logs_dir \
         --dropout_rate=$drop_prob --learning_rate=$lr --target=$target --environment=$environment \
         --past_length=$past_length --pred_length=$prediction_length --batch_size=$batch_size \
         --num_batches_per_epoch=$batch_num --epochs=$epochs

@@ -36,8 +36,8 @@ class ISSM:
     The structure of ISSM is given by
 
         * dimension of the latent state
-        * transition and emission coefficents of the transition model
-        * emission coefficient of the observation model
+        * transition and emission coefficents of the transition models
+        * emission coefficient of the observation models
 
     """
 

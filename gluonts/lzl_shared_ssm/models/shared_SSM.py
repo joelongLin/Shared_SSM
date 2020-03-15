@@ -1,6 +1,5 @@
 # -*- coding: UTF-8 -*-
 # author : joelonglin
-import logging
 import tensorflow as tf
 import numpy as np
 import pandas as pd
@@ -8,76 +7,26 @@ import pickle
 import time
 import os
 from tqdm import tqdm
-import json
 import logging
 import matplotlib
 matplotlib.use('Agg') # 用这句话避免 xshell 调参时，出现X11转发
-import matplotlib.pyplot as plt
 from gluonts.time_feature import time_features_from_frequency_str
 from gluonts.model.forecast import SampleForecast
 from gluonts.transform import (Chain ,
+                               AddInitTimeFeature,
                                AddObservedValuesIndicator,
                                AddTimeFeatures,
-                               AddAgeFeature,
-                               VstackFeatures,
                                SwapAxes,
-                               CanonicalInstanceSplitter,
                                InstanceSplitter)
 from gluonts.transform.sampler import TestSplitSampler
 from gluonts.dataset.field_names import FieldName
 from .scaler import MeanScaler , NOPScaler
 from .filter import MultiKalmanFilter
-from .tool_func import weighted_average
 from .data_loader import TrainDataLoader_OnlyPast ,InferenceDataLoader_WithFuture, mergeIterOut , stackIterOut
+from ..utils import del_previous_model_params , plot_train_epoch_loss , plot_train_pred
 
-def plot_train_result(
-        result:dict,
-        path: str
-):
-    epoches = list(result.keys())
-    loss = list(result.values())
-    fig = plt.figure()
-    ax = fig.add_subplot(1, 1, 1)
-    ax.plot(epoches, loss, color='tab:blue' , marker='D')
-    ax.set(xlabel='epoch (s)', ylabel='filter negative log likelihood',
-           title='epoch information when training')
-    plt.savefig(os.path.join(path , 'train.png'))
-    plt.close(fig)
-
-def plot_train_pred(path, data, pred, batch, epoch, plot_num, time_start, freq):
-    '''
-    :param path: 存放图片的地址
-    :param data: 真实数据 #(ssm_num , bs , seq , 1)
-    :param pred: 模型训练时预测的 每个时间步的 期望
-    :param batch: 辨明当前的
-    :param epoch:当前的epoch
-    :param plot_num: 当前情况下需要输出的图片数量
-    :param time_start : 绘图的初始时间
-    :param freq : 当前的时间间隔
-    :return:
-    '''
-    #先把多余的维度去除
-    data = np.squeeze(data , -1)
-    pred = np.squeeze(pred ,-1)
-    root_path = os.path.join(path , 'train_pred_pic')
-    #当前采样
-    ssm_no = np.random.choice(np.arange(data.shape[0]) , 1)[0] # 如果不进行slice会导致后面值多一维度
-    samples_no = np.random.choice(np.arange(data.shape[1]) , plot_num)
-    current_dir = os.path.join(root_path, 'epoch({})'.format(epoch))
-    if not os.path.isdir(current_dir):
-        os.makedirs(current_dir)
-    for sample in samples_no:
-        pic_name = os.path.join(current_dir , 'ssm_no({})_batch_no({})_sample({})'.format(ssm_no,batch,sample))
-        time_range = pd.date_range(time_start[sample], periods=data.shape[2], freq=freq)
-        s1 = data[ssm_no , sample]
-        s2 = pred[ssm_no , sample]
-        fig = plt.figure(figsize = (40,30))
-        ax = fig.add_subplot(1, 1, 1)
-        ax.plot(time_range , s1 , linestyle = '-' , color = 'tab:green')
-        ax.plot(time_range , s2 , linestyle = '-.' , color = 'tab:blue')
-        plt.savefig(pic_name)
-        plt.close(fig)
-    pass
+#一些公用字符串
+INIT_TIME = 'init_time'
 
 
 class SharedSSM(object):
@@ -160,6 +109,11 @@ class SharedSSM(object):
         time_features = time_features_from_frequency_str(self.config.freq)
         self.time_dim = len(time_features)
         transformation = Chain([
+            AddInitTimeFeature(
+                start_field=FieldName.START,
+                output_field=INIT_TIME,
+                time_features=time_features
+            ),
             SwapAxes(
                 input_fields=[FieldName.TARGET],
                 axes=[0,1],
@@ -233,7 +187,6 @@ class SharedSSM(object):
                                                         FieldName.TARGET],
                                                dim=0,
                                                include_future=True)
-
 
 
     def build_module(self):
@@ -433,7 +386,7 @@ class SharedSSM(object):
         return self
 
     def initialize_variables(self):
-        """ Initialize variables or load saved model
+        """ Initialize variables or load saved models
         :return: self
         """
         # Setup saver
@@ -513,9 +466,9 @@ class SharedSSM(object):
                                             , feed_dict=feed_dict)
                     # 将训练时的 output_mean 和 真实值进行比对 #(ssm_num ,bs , seq)
                     batch_pred = sess.run(self.pred_mean, feed_dict=feed_dict)
-                    # plot_train_pred(path=self.log_path, data=target_batch_input['past_target'], pred=batch_pred,
-                    #                 batch=batch_no, epoch=epoch_no, plot_num=4
-                    #                 , time_start=target_batch_input['start'], freq=self.config.freq)
+                    plot_train_pred(path=self.log_path, data=target_batch_input['past_target'], pred=batch_pred,
+                                    batch=batch_no, epoch=epoch_no, plot_num=4
+                                    , time_start=target_batch_input['start'], freq=self.config.freq)
                     epoch_loss += np.sum(batch_nll)
                     avg_epoch_loss = epoch_loss/((batch_no+1)*self.config.batch_size)
 
@@ -548,7 +501,7 @@ class SharedSSM(object):
             )
             #如果当前 epoch 的结果比之前的要好，则立刻取代，保存
             if avg_epoch_loss < best_epoch_info['filter_nll']:
-                del_model_params(self.log_path)
+                del_previous_model_params(self.log_path)
                 best_epoch_info['filter_nll'] = avg_epoch_loss
                 best_epoch_info['epoch_no'] = epoch_no
                 self.save_path = os.path.join(self.log_path, "model_params"
@@ -557,7 +510,7 @@ class SharedSSM(object):
                                                          best_epoch_info['filter_nll'])
                                               )
                 self.saver.save(sess, self.save_path)
-        plot_train_result(train_plot_points , self.log_path)
+        plot_train_epoch_loss(train_plot_points , self.log_path)
         logging.info(
             f"Loading parameters from best epoch "
             f"({best_epoch_info['epoch_no']})"
@@ -569,7 +522,7 @@ class SharedSSM(object):
         )
 
         # save net parameters
-        logging.getLogger().info("End model training")
+        logging.getLogger().info("End models training")
 
     def predict(self):
         exit()
@@ -580,7 +533,7 @@ class SharedSSM(object):
             path = self.save_path
             try:
                 self.saver.restore(sess, save_path=path)
-                print('there is no problem in restoring model params')
+                print('there is no problem in restoring models params')
             except:
                 print('something bad appears')
             finally:
@@ -625,19 +578,7 @@ class SharedSSM(object):
     def evaluate(self, forecast=None):
         pass
 
-def del_model_params(path):
-    '''
-    :param path:  该组参数组的主目录
-    :return:  删除之前epoch的参数文件
-    '''
-    path = os.path.join(path,'model_params')
-    if not os.path.isdir(path):
-        return
-    for files in os.listdir(path):
-        if files.endswith(".data-00000-of-00001") \
-                or files.endswith(".index") \
-                or files.endswith(".meta"):
-            os.remove(os.path.join(path,files))
+
 
 def evaluate_up_down(ground_truth , mc_forecast):
     # 0代表跌 1代表涨

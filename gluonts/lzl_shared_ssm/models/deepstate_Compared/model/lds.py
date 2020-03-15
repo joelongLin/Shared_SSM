@@ -147,8 +147,8 @@ class LDS(object):
         if scale is not None:
             x = tf.math.divide(x,tf.expand_dims(scale,axis=1))
 
-        log_p, final_mean, final_cov = self.kalman_filter(x, observed)
-        return log_p, final_mean, final_cov
+        log_p, final_mean, final_cov ,all_pred_mean , all_pred_cov = self.kalman_filter(x, observed)
+        return log_p, final_mean, final_cov , all_pred_mean , all_pred_cov
 
     def kalman_filter(
         self, targets, observed
@@ -192,11 +192,13 @@ class LDS(object):
 
         t = 0
         log_p_seq = tf.TensorArray(size=self.seq_length ,dtype=tf.float32)
+        all_pred_mu = tf.TensorArray(size=self.seq_length , dtype=tf.float32)
+        all_pred_cov = tf.TensorArray(size=self.seq_length, dtype=tf.float32)
 
-        def cond(t, mean, cov, log_p_seq):
+        def cond(t, mean, cov, log_p_seq , all_pred_mu  ,all_pred_cov):
             return tf.less(t, self.seq_length)
 
-        def body(t, mean, cov, log_p_seq):
+        def body(t, mean, cov, log_p_seq , all_pred_mu  ,all_pred_cov):
             filtered_mean, filtered_cov, log_p = kalman_filter_step(
                 target=targets[t],
                 prior_mean=mean,
@@ -225,6 +227,8 @@ class LDS(object):
                 ), axis=-1
             )
 
+            all_pred_mu = all_pred_mu.write(t , mean)
+
             # Covariance of p(l_{t+1} | l_t)
             cov = tf.linalg.matmul(
                 self.transition_coeff[t],
@@ -243,12 +247,14 @@ class LDS(object):
                 transpose_a=True,
             )
 
+            all_pred_cov = all_pred_cov.write(t, cov)
+
             t = t + 1
 
-            return t, mean, cov, log_p_seq
+            return t, mean, cov, log_p_seq ,all_pred_mu ,all_pred_cov
 
-        _, mean, cov, log_p_seq = tf.while_loop(cond, body,
-                                                loop_vars=[t, mean, cov, log_p_seq])
+        _, mean, cov, log_p_seq ,all_pred_mu ,all_pred_cov = tf.while_loop(cond, body,
+                                                loop_vars=[t, mean, cov, log_p_seq , all_pred_mu, all_pred_cov])
         # print('log_p_seq stack shape' , log_p_seq.stack().shape)
         # exit()
 
@@ -256,10 +262,12 @@ class LDS(object):
             tf.squeeze(log_p_seq.stack() ,axis=-1)
             , [1,0]
         )
+        all_pred_mu = tf.transpose(all_pred_mu.stack() , [1,0,2]) #(bs ,seq ,dim_l)
+        all_pred_cov = tf.transpose(all_pred_cov.stack() , [1,0,2,3]) #(bs,seq , dim_l)
 
         # Return sequence of log likelihoods, as well as
         # final mean and covariance of p(l_T | l_{T-1} where T is seq_length
-        return log_p_seq, mean, cov
+        return log_p_seq, mean, cov, all_pred_mu, all_pred_cov
 
     def sample(
         self, num_samples = None, scale = None

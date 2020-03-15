@@ -212,6 +212,57 @@ class AddTimeFeatures(MapTransformation):
         data[self.output_field] = features
         return data
 
+class AddInitTimeFeature(MapTransformation):
+    """
+    添加 start_field前一步时刻的time feature
+
+
+    Parameters
+    ----------
+    start_field
+        Field with the start time stamp of the time series
+    output_field
+        Field name for result.
+    time_features
+        list of time features to use.
+    pred_length
+        Prediction length
+    """
+
+    @validated()
+    def __init__(
+        self,
+        start_field: str,
+        output_field: str,
+        time_features: List[TimeFeature],
+    ) -> None:
+        self.date_features = time_features
+        self.start_field = start_field
+        self.output_field = output_field
+        self.pre_features: np.ndarray = None
+
+    def _get_previous_features(self, start: pd.Timestamp) -> None:
+        length = -1
+        previous = shift_timestamp(start, length)
+        self.pre_features = (
+            np.array(
+                [feat(previous) for feat in self.date_features]
+            )
+            if self.date_features
+            else None
+        )
+
+    def map_transform(self, data: DataEntry, is_train: bool) -> DataEntry:
+        start = data[self.start_field]
+        # 表示前一个时间步
+        self._get_previous_features(start)
+        features = (
+            self.pre_features
+            if self.date_features
+            else None
+        )#(time_feature)
+        data[self.output_field] = features
+        return data
 
 class AddAgeFeature(MapTransformation):
     """

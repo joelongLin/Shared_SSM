@@ -29,8 +29,8 @@ from gluonts.transform import (Chain ,
 from gluonts.transform.sampler import TestSplitSampler
 from gluonts.dataset.field_names import FieldName
 from .scaler import MeanScaler , NOPScaler
-from gluonts.lzl_finance.model.filter import MultiKalmanFilter
-from gluonts.lzl_finance.model.data_loader import TrainDataLoader_OnlyPast ,InferenceDataLoader_WithFuture, mergeIterOut , stackIterOut
+from gluonts.lzl_shared_ssm.utils import plot_train_epoch_loss, plot_train_pred_NoSSMnum, del_previous_model_params
+from gluonts.lzl_shared_ssm.models.data_loader import TrainDataLoader_OnlyPast ,InferenceDataLoader_WithFuture, mergeIterOut , stackIterOut
 
 
 class FeatureEmbedder(object):
@@ -100,12 +100,8 @@ class DeepStateNetwork(object):
             name, '%s_DsSeries_%d' % (self.config.slice, series),
                   'train_%d' % self.config.past_length, 'pred_%d' % self.config.pred_length,
         ) for name in self.config.target.split(',')]
-        env_path = [name_prefix.format(
-            name, '%s_DsSeries_%d' % (self.config.slice, series),
-                  'train_%d' % self.config.past_length, 'pred_%d' % self.config.pred_length,
-        ) for name in self.config.environment.split(',')]
 
-        for path in target_path + env_path:
+        for path in target_path:
             # 循环 path 的时候 需要 得到当前 path 对应的 ds_name
             for ds_name in ds_names.split(','):
                 if ds_name in path:
@@ -121,7 +117,7 @@ class DeepStateNetwork(object):
                                   , self.config.freq))
             else:
                 logging.info(' dataset [%s] was found , good~~~' % ds_name)
-        self.target_data, self.env_data = [], []
+        self.target_data = []
         # 由于 target 应该都是 dim = 1 只是确定有多少个 SSM 而已
         for target in target_path:
             with open(target, 'rb') as fp:
@@ -130,18 +126,11 @@ class DeepStateNetwork(object):
                 self.target_data.append(target_ds)
 
         self.ssm_num = len(self.target_data)
-        self.env_dim = 0
-        for env in env_path:
-            with open(env, 'rb') as fp:
-                env_ds = pickle.load(fp)
-                self.env_dim += env_ds.metadata['dim']
-                self.env_data.append(env_ds)
-        print('导入原始数据成功~~~')
 
     def transform_data(self):
         # 首先需要把 target
         time_features = time_features_from_frequency_str(self.config.freq)
-        self.time_dim = len(time_features)
+        self.time_dim = len(time_features) + 1 # 考虑多加了一个 age_features
         seasonal = CompositeISSM.seasonal_features(self.freq)
         self.seasonal_dim = len(seasonal)
         transformation = Chain([
@@ -161,13 +150,27 @@ class DeepStateNetwork(object):
                 target_field=FieldName.TARGET,
                 output_field="seasonal_indicators",
             ),
-            # 这里的 AddTimeFeatures，面对的ts, 维度应该为(features,T)
             AddTimeFeatures(
                 start_field=FieldName.START,
                 target_field=FieldName.TARGET,
                 output_field=FieldName.FEAT_TIME,
                 time_features=time_features,
-                pred_length=self.config.pred_length,
+                pred_length=self.pred_length,
+            ),
+            AddAgeFeature(
+                target_field=FieldName.TARGET,
+                output_field=FieldName.FEAT_AGE,
+                pred_length=self.pred_length,
+                log_scale=True,
+            ),
+            VstackFeatures(
+                output_field=FieldName.FEAT_TIME,
+                input_fields=[FieldName.FEAT_TIME, FieldName.FEAT_AGE]
+                             + (
+                                 [FieldName.FEAT_DYNAMIC_REAL]
+                                 if self.use_feat_dynamic_real
+                                 else []
+                             ),
             ),
             InstanceSplitter(
                 target_field=FieldName.TARGET,
@@ -189,17 +192,6 @@ class DeepStateNetwork(object):
         ])
         print('已设置时间特征~~')
         # 设置环境变量的 dataloader
-        env_train_iters = [iter(TrainDataLoader_OnlyPast(
-            dataset=self.env_data[i].train,
-            transform=transformation,
-            batch_size=self.config.batch_size,
-            num_batches_per_epoch=self.config.num_batches_per_epoch,
-        )) for i in range(len(self.env_data))]
-        env_test_iters = [iter(InferenceDataLoader_WithFuture(
-            dataset=self.env_data[i].test,
-            transform=transformation,
-            batch_size=self.config.batch_size,
-        )) for i in range(len(self.env_data))]
         target_train_iters = [iter(TrainDataLoader_OnlyPast(
             dataset=self.target_data[i].train,
             transform=transformation,
@@ -212,17 +204,11 @@ class DeepStateNetwork(object):
             batch_size=self.config.batch_size,
         )) for i in range(len(self.target_data))]
 
-        self.env_train_loader = mergeIterOut(env_train_iters,
-                                             fields=[FieldName.OBSERVED_VALUES, FieldName.FEAT_TIME, FieldName.TARGET],
-                                             include_future=True)
         self.target_train_loader = stackIterOut(target_train_iters,
                                                 fields=[FieldName.OBSERVED_VALUES, FieldName.FEAT_TIME,
                                                         FieldName.TARGET],
                                                 dim=0,
                                                 include_future=False)
-        self.env_test_loader = mergeIterOut(env_test_iters,
-                                            fields=[FieldName.OBSERVED_VALUES, FieldName.FEAT_TIME, FieldName.TARGET],
-                                            include_future=True)
         self.target_test_loader = stackIterOut(target_test_iters,
                                                fields=[FieldName.OBSERVED_VALUES, FieldName.FEAT_TIME,
                                                        FieldName.TARGET],
@@ -238,11 +224,6 @@ class DeepStateNetwork(object):
         self.past_length = config.past_length
         self.pred_length = config.pred_length
         self.add_trend = config.add_trend
-
-
-        # 放入数据集
-        self.load_original_data()
-        self.transform_data()
 
         # network configuration
         self.batch_size = config.batch_size
@@ -264,6 +245,10 @@ class DeepStateNetwork(object):
         self.issm = CompositeISSM.get_from_freq(self.freq, self.add_trend)
 
         self.univariate = self.issm.output_dim() == 1
+
+        # 放入数据集
+        self.load_original_data()
+        self.transform_data()
 
 
         # 开始搭建有可能Input 对应的 placeholder
@@ -417,15 +402,26 @@ class DeepStateNetwork(object):
         )#(bs,seq_length , 1)
 
 
-        ll, _, _ = lds.log_prob(
+        ll, _, _ , mu_pred ,_ = lds.log_prob(
             x=tf.slice(
                 self.past_target,
                 begin=[0,0,0], size=[-1,-1,-1]
             ),#(bs,seq_length ,time_feat)
             observed=tf.math.reduce_min(observed_context ,axis=-1), #(bs ,seq_length)
             scale=scale,
-        )#(bs,seq_length)
+        )#(bs,seq_length), (bs, seq , dim_l)
+        mu_pred.set_shape([self.batch_size , self.config.past_length ,self.issm.latent_dim()])
 
+        # 对于观测值的预测
+        self.z_pred = tf.squeeze(tf.linalg.matmul(
+            tf.transpose(lds.emission_coeff , [1,0,2,3]) #(bs, seq , 1 , dim_l)
+            , tf.expand_dims(mu_pred, -1) #(bs ,seq ,dim_l ,1)
+        ),axis=-1)#(bs ,seq ,1)
+        self.z_pred = tf.math.multiply(
+            self.z_pred,
+            tf.expand_dims(scale, axis=1)
+        )
+        print(self.z_pred.shape)
 
         self.train_result = weighted_average(
             x=-ll, axis=1, weights= tf.math.reduce_min(observed_context, axis=-1)
@@ -462,7 +458,7 @@ class DeepStateNetwork(object):
              begin=[0,0,0], size=[-1,-1,-1]
         )#(bs,seq_length , 1)
 
-        _, final_mean, final_cov = lds.log_prob(
+        _, final_mean, final_cov,_,_ = lds.log_prob(
             x=tf.slice(
                 self.past_target,
                 begin=[0, 0, 0], size=[-1, -1, -1]
@@ -500,7 +496,7 @@ class DeepStateNetwork(object):
 
 
     def initialize_variables(self):
-        """ Initialize variables or load saved model
+        """ Initialize variables or load saved models
         :return: self
         """
         # Setup saver
@@ -508,13 +504,13 @@ class DeepStateNetwork(object):
 
         # Initialize or reload variables
         if self.config.reload_model is not '':
-            print("Restoring model in %s" % self.config.reload_model)
+            print("Restoring models in %s" % self.config.reload_model)
             params_path = os.path.join(self.config.reload_model , "model_params")
             param_name = os.listdir(params_path)[0].split('.')[0]
             params_path = os.path.join(params_path, param_name)
             self.saver.restore(self.sess, params_path)
         else:
-            print("Training to get new model params")
+            print("Training to get new models params")
             self.sess.run(tf.global_variables_initializer())
         return self
 
@@ -555,28 +551,22 @@ class DeepStateNetwork(object):
 
             with tqdm(range(num_batches)) as it:
                 for batch_no in it :
-                    env_batch_input = next(self.env_train_loader)
                     target_batch_input = next(self.target_train_loader)
-                    # # print('第 ',batch_no,'的env_batch_input["past_target"]:',  env_batch_input['past_target'].shape)
-                    # feed_dict = {
-                    #     self.placeholders['past_environment']: env_batch_input['past_target'],
-                    #     self.placeholders['past_env_observed']: env_batch_input[
-                    #         'past_%s' % (FieldName.OBSERVED_VALUES)],
-                    #     self.placeholders['past_time_feature']: env_batch_input['past_time_feat'],
-                    #     self.placeholders['past_target']: target_batch_input['past_target'],
-                    #     self.placeholders['past_target_observed']: target_batch_input[
-                    #         'past_%s' % (FieldName.OBSERVED_VALUES)]
-                    # }
                     for i in range(self.ssm_num):
                         feed_dict = {
-                            self.past_seasonal_indicators: env_batch_input['past_%s' % ('seasonal_indicators')],
-                            self.past_time_feat: env_batch_input['past_time_feat'],
+                            self.past_seasonal_indicators: target_batch_input['past_%s' % ('seasonal_indicators')],
+                            self.past_time_feat: target_batch_input['past_time_feat'][i],
                             self.feat_static_cat : i * np.ones(dtype=np.float32 , shape=(self.config.batch_size ,1)),
                             self.past_observed_values : target_batch_input['past_%s' % (FieldName.OBSERVED_VALUES)][i] ,
                             self.past_target : target_batch_input['past_target'][i]}
 
                         batch_output , _   = sess.run([self.train_result , self.train_op]
                                                 , feed_dict=feed_dict)
+                        batch_pred  = sess.run(self.z_pred , feed_dict = feed_dict)
+                        plot_train_pred_NoSSMnum(path=self.log_path,data=target_batch_input['past_target'][i]
+                                                 ,pred=batch_pred,batch=batch_no,epoch=epoch_no,ssm_no =i
+                                                 ,plot_num=4,time_start=target_batch_input['start']
+                                                 , freq=self.freq)
                         epoch_loss += np.sum(batch_output)
                         avg_epoch_loss = epoch_loss/((batch_no+1)*self.config.batch_size*(i+1))
 
@@ -609,6 +599,7 @@ class DeepStateNetwork(object):
             )
 
             if avg_epoch_loss < best_epoch_info['metric_value']:
+                del_previous_model_params(self.log_path)
                 best_epoch_info['metric_value'] = avg_epoch_loss
                 best_epoch_info['epoch_no'] = epoch_no
                 self.save_path = os.path.join(self.log_path, "model_params"
@@ -618,7 +609,7 @@ class DeepStateNetwork(object):
                                               )
                 self.saver.save(sess, self.save_path)
                 #'/{}_{}_best.ckpt'.format(self.dataset,epoch_no)
-        plot_train_result(train_plot_points, self.log_path)
+        plot_train_epoch_loss(train_plot_points, self.log_path)
         logging.info(
             f"Loading parameters from best epoch "
             f"({best_epoch_info['epoch_no']})"
@@ -630,7 +621,7 @@ class DeepStateNetwork(object):
         )
 
         # save net parameters
-        logging.getLogger().info("End model training")
+        logging.getLogger().info("End models training")
 
     def predict(self):
         sess = self.sess
@@ -640,7 +631,7 @@ class DeepStateNetwork(object):
             path = self.save_path
             try:
                 self.saver.restore(sess, save_path=path)
-                print('there is no problem in restoring model params')
+                print('there is no problem in restoring models params')
             except:
                 print('something bad appears')
             finally:
@@ -720,19 +711,6 @@ def plot_prob_forecasts(ts_entry, forecast_entry,ds_name ,no ,plot_length):
     plt.savefig('pic/{}_result/result_output_tf_{}.png'.format(ds_name,no))
     plt.close(fig)
 
-def plot_train_result(
-        result:dict,
-        path: str
-):
-    epoches = list(result.keys())
-    loss = list(result.values())
-    fig = plt.figure()
-    ax = fig.add_subplot(1, 1, 1)
-    ax.plot(epoches, loss, color='tab:green' , marker='o')
-    ax.set(xlabel='epoch (s)', ylabel='filter negative log likelihood',
-           title='epoch information when training')
-    plt.savefig(os.path.join(path , 'train.png'))
-    plt.close(fig)
 
 def evaluate_up_down(ground_truth , mc_forecast):
     # 0代表跌 1代表涨

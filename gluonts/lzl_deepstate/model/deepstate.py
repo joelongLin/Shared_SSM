@@ -358,7 +358,7 @@ class DeepStateNetwork(object):
 
 
     def initialize_variables(self):
-        """ Initialize variables or load saved model
+        """ Initialize variables or load saved models
         :return: self
         """
         # Setup saver
@@ -366,13 +366,13 @@ class DeepStateNetwork(object):
 
         # Initialize or reload variables
         if self.config.reload_model is not '':
-            print("Restoring model in %s" % self.config.reload_model)
+            print("Restoring models in %s" % self.config.reload_model)
             params_path = os.path.join(self.config.reload_model , "model_params")
             param_name = os.listdir(params_path)[0].split('.')[0]
             params_path = os.path.join(params_path, param_name)
             self.saver.restore(self.sess, params_path)
         else:
-            print("Training to get new model params")
+            print("Training to get new models params")
             self.sess.run(tf.global_variables_initializer())
         return self
 
@@ -466,7 +466,7 @@ class DeepStateNetwork(object):
         )
 
         # save net parameters
-        logging.getLogger().info("End model training")
+        logging.getLogger().info("End models training")
 
     def predict(self):
         sess = self.sess
@@ -476,7 +476,7 @@ class DeepStateNetwork(object):
             path = self.save_path
             try:
                 self.saver.restore(sess, save_path=path)
-                print('there is no problem in restoring model params')
+                print('there is no problem in restoring models params')
             except:
                 print('something bad appears')
             finally:
