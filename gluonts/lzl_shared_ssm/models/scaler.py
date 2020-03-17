@@ -15,46 +15,43 @@ class Scaler(object):
     def __init__(self, keepdims = False):
         self.keepdims = keepdims
 
-    def compute_scale(self, data, observed_indicator):
+    def compute_scale(self, data, observed_indicator, seq_axis):
         """
         Computes the scale of the given input data.
         Parameters
         ----------
         data
-            tensor of shape (batch_size, seq_length, cardinality) containing the data to be scaled
-
+            数据
         observed_indicator
-            observed_indicator: binary tensor with the same shape as
-            ``data``, that has 1 in correspondence of observed data points,
-            and 0 in correspondence of missing data points.
+            观测值
+        seq_axis
+            指定seq 所在的 维度
         """
         raise NotImplementedError()
 
     # noinspection PyMethodOverriding
     def build_forward(
-        self, data, observed_indicator
+        self, data, observed_indicator, seq_axis
     ) :
         """
         Parameters
         ----------
-        the same as compute_scale
-
+            与 compute_scale一样
         Returns
         -------
         Tensor
-            Tensor containing the "scaled" data, the same shape as data.
+            被scaled之后的值
         Tensor
-            Tensor containing the scale, of shape (N, C) if ``keepdims == False``, and shape
-            (N, 1, C) if ``keepdims == True``.
+            scaled 函数是否要保持维度一致
 
         """
-        scale = self.compute_scale(data, observed_indicator)
+        scale = self.compute_scale(data, observed_indicator, seq_axis)
 
         if self.keepdims:
-            scale = tf.expand_dims(scale,axis=1)
+            scale = tf.expand_dims(scale,axis=seq_axis)
             return tf.math.divide(data, scale), scale
         else:
-            return tf.math.divide(data, tf.expand_dims(scale,axis=1)), scale
+            return tf.math.divide(data, tf.expand_dims(scale,axis=seq_axis)), scale
 
 class MeanScaler(Scaler):
     """
@@ -75,13 +72,13 @@ class MeanScaler(Scaler):
         self.minimum_scale = minimum_scale
 
     def compute_scale(
-        self, data, observed_indicator  # shapes (N, T, C)
+        self, data, observed_indicator,seq_axis  # shapes (N, T, C)
     ) :
         """
         Parameters
         ----------
         data
-            tensor of shape (N, T, C) containing the data to be scaled
+            tensor of shape (..., N, T, C) containing the data to be scaled
 
         observed_indicator
             observed_indicator: binary tensor with the same shape as
@@ -94,21 +91,21 @@ class MeanScaler(Scaler):
             shape (N, C), computed according to the
             average absolute value over time of the observed values.
         """
-
-        # these will have shape (N, C) 注意：这里的sample
-        num_observed = tf.math.reduce_sum(observed_indicator, axis=1) # 计算每一个sample中，观测到 数据 的数量
-        sum_observed = tf.math.reduce_sum((tf.math.abs(data) * observed_indicator),axis=1) # 计每一个sample中，观测值的绝对值的和
+        # these will have shape (...,N, C) 注意：这里的sample
+        num_observed = tf.math.reduce_sum(observed_indicator, axis=seq_axis) # 计算每一个sample中，观测到 数据 的数量
+        sum_observed = tf.math.reduce_sum((tf.math.abs(data) * observed_indicator),axis=seq_axis) # 计每一个sample中，观测值的绝对值的和
 
         # first compute a global scale per-dimension
-        total_observed = tf.math.reduce_sum(num_observed,axis=0) #计算一个batch里面，观测到 数据 的数量
+        total_observed = tf.math.reduce_sum(num_observed,axis=seq_axis-1) #计算一个batch里面，观测到 数据 的数量
         denominator = tf.math.maximum(total_observed, 1.0)
-        # shape (C, ) # batch观测到的值的绝对值的和 / batch观测到的值的数量
-        default_scale = tf.math.reduce_sum(sum_observed,axis=0) / denominator
+        # shape (...,1,C, ) # batch观测到的值的绝对值的和 / batch观测到的值的数量
+        default_scale = tf.math.reduce_sum(sum_observed,axis=seq_axis-1) / denominator
+        default_scale = tf.expand_dims(default_scale, axis=seq_axis-1)
 
         # then compute a per-item, per-dimension scale
         denominator = tf.math.maximum(num_observed, 1.0)
         # sample观测到的值的绝对值的和 / sample观测到的值的数量
-        scale = sum_observed / denominator  # shape (N, C)
+        scale = sum_observed / denominator  # shape (..., N, C)
 
         # use per-batch scale when no element is observed
         # or when the sequence contains only zeros

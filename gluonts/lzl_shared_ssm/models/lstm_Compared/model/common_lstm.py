@@ -243,6 +243,7 @@ class Common_LSTM(object):
         return self
 
     def build_predict_forward(self):
+
         return self
 
 

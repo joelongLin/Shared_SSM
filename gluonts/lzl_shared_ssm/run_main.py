@@ -15,7 +15,7 @@ cl = tf.app.flags
 # reload_model =  'logs/btc_eth/Dec_25_17:27:07_2019'
 reload_model = ''
 cl.DEFINE_string('reload_model' ,reload_model,'models to reload')
-cl.DEFINE_string('logs_dir','logs/btc_eth','file to print log')
+cl.DEFINE_string('logs_dir','logs/btc_eth(shared_ssm)','file to print log')
 cl.DEFINE_string('gpu' , '3' , 'gpu to use')
 cl.DEFINE_float('dropout_rate' , 0.1 , 'Dropout regularization parameter (default: 0.1)')
 cl.DEFINE_float('learning_rate' , 0.001 , 'Initial learning rate')

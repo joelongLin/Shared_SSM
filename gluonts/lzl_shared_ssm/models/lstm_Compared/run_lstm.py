@@ -23,7 +23,7 @@ cl.DEFINE_float('learning_rate' , 0.001 , 'Initial learning rate')
 
 # network configuration
 cl.DEFINE_bool('scaling' , True , 'whether use scaler to scale the data')
-cl.DEFINE_bool('use_time_feat' , True , 'whether put the time feature into lstm')
+cl.DEFINE_bool('use_time_feat' , False , 'whether put the time feature into lstm')
 cl.DEFINE_bool('use_orig_compute_loss' , True , 'compute the loss function with original data or scaled data')
 cl.DEFINE_integer('num_layers' ,2,'num of lstm cell layers')
 cl.DEFINE_integer('num_cells' ,40 , 'hidden units size of lstm cell')

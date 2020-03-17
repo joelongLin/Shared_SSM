@@ -6,15 +6,15 @@ gpu='3'
 reload_model=''
 target="btc,eth"
 environment='gold'
-logs_dir="logs/btc_eth"
-past_length='7'
-prediction_length='1'
+logs_dir="logs/btc_eth(shared_ssm)"
+past_length='90'
+prediction_length='5'
 batch_size='32'
 batch_num='30'
 epochs='50'
 for ((i=1;i<=1;i=i+1))#! repettion
 do
-    for drop_prob in 0.5
+    for drop_prob in 0.5, 0.1
     do
         for lr in 0.001
         do

@@ -28,20 +28,17 @@ class MultiKalmanFilter(object):
         init = kwargs.pop('Sigma',None).astype(np.float32)
         self.Sigma = tf.get_variable('Sigma', initializer=init, trainable=False)  # uncertainty covariance
 
-        init = kwargs.pop('z_0',None).astype(np.float32)
-        self.z_0 = tf.get_variable('z_0', initializer=init)  # initial output
+        self.z_0 = kwargs.pop('z_0',None)
+        # self.z_0 = tf.get_variable('z_0', initializer=init)  # initial output
 
-        init = kwargs.pop('A', None)
-        self.A = tf.get_variable('A', initializer=init)
+        self.A  = kwargs.pop('A', None)
 
-        init = kwargs.pop('B', None).astype(np.float32)
-        self.B = tf.get_variable('B', initializer=init)  # control transition matrix
+        self.B = kwargs.pop('B', None)
 
-        # 注意这里，千万不要 tf.get_variable
         self.Q = kwargs.pop('Q', None)
 
-        init = kwargs.pop('C', None).astype(np.float32)
-        self.C = tf.get_variable('C', initializer=init)   # Measurement function
+        self.C = kwargs.pop('C', None)
+        # self.C = tf.get_variable('C', initializer=init)   # Measurement function
 
         self.R = kwargs.pop('R', None)
 
@@ -55,10 +52,6 @@ class MultiKalmanFilter(object):
         self.z = kwargs.pop('z', None)
         if self.z is None:
             self.z = tf.placeholder(tf.float32, shape=(None ,None, None, dim_z), name='z')
-
-        self.z_scale = kwargs.pop('z_scale' , None)
-        if self.z_scale is None:
-            self.z_scale = tf.placeholder(tf.float32 , shape=(None ,None,dim_z) , name = 'z_scale')
 
         self.u = kwargs.pop('u', None)
         if self.u is None:
@@ -172,6 +165,15 @@ class MultiKalmanFilter(object):
                                               dummy_init_A, dummy_init_B, dummy_init_C),
                                  parallel_iterations=1, name='forward')
         return forward_states
+
+    def compute_forwards_with_pred_result(self):
+        '''
+        上面的 compute_forwards我觉得是用offline的方式取写online的算法
+        即：假设所有的 z 都给定了，然后你进行计算
+        而这里的方法，则是一开始不存在z ，所有的一切filter都使用预测之后的结果进行填充
+
+        :return:
+        '''
 
     def compute_backwards(self, forward_states):
         '''
@@ -311,6 +313,14 @@ class MultiKalmanFilter(object):
         return log_q_seq , output_mean
 
     def filter(self):
+        '''
+        :return: 计算
+        p(z_t|z_(1:t-1)) 期望
+        p(l_t|z_(1:t))  期望以及方差
+        A(t | z_(1:t))  B(t | z_(1:t))
+        C(t | z_(1:t-1))
+        alpha_lstm_last_state 用于作用在预测的时候
+        '''
         #  暂时把compute forward 函数里面的reuse 给去除
         mu_pred, Sigma_pred, mu_filt, Sigma_filt, alpha, state,  A, B, C  = forward_states = \
             self.compute_forwards()
@@ -321,8 +331,9 @@ class MultiKalmanFilter(object):
         # Swap batch dimension and time dimension
         forward_states[0] = tf.transpose(forward_states[0], [1, 2, 0, 3])
         forward_states[1] = tf.transpose(forward_states[1], [1, 2, 0, 3 , 4])
-        return tuple(forward_states), tf.transpose(A, [1, 2, 0, 3, 4]), tf.transpose(B, [1, 2, 0, 3, 4]), \
-               tf.transpose(C, [1, 2, 0, 3, 4]), tf.transpose(alpha, [1, 2, 0, 3]) , log_p_seq , output_mean
+        return output_mean,tuple(forward_states), tf.transpose(A, [1, 2, 0, 3, 4]), tf.transpose(B, [1, 2, 0, 3, 4]), \
+               tf.transpose(C, [1, 2, 0, 3, 4]), tf.transpose(alpha, [1, 2, 0, 3]) , state \
+            , log_p_seq
 
     def smooth(self):
         backward_states, A, B, C, alpha = self.compute_backwards(self.compute_forwards())

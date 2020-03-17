@@ -47,21 +47,23 @@ def plot_train_pred(path, data, pred, batch, epoch, plot_num, time_start, freq):
     current_dir = os.path.join(root_path, 'epoch({})'.format(epoch))
     if not os.path.isdir(current_dir):
         os.makedirs(current_dir)
-    for sample in samples_no:
-        pic_name = os.path.join(current_dir , 'batch_no({})_ssm_no({})_sample({})'.format(batch,ssm_no,sample))
-        time_range = pd.date_range(time_start[sample], periods=data.shape[2], freq=freq)
-        s1 = data[ssm_no , sample]
-        s2 = pred[ssm_no , sample]
-        fig = plt.figure(figsize=(28, 21))
-        ax = fig.add_subplot(1, 1, 1)
-        ax.plot(time_range, s1, linestyle='-', color='tab:green', marker='D', label='Truth')
-        ax.plot(time_range, s2, linestyle='-.', color='tab:blue', marker='o', label='prediction')
-        ax.xaxis.set_tick_params(labelsize=21)
-        ax.yaxis.set_tick_params(labelsize=21)
-        ax.legend(prop={'size': 31}, edgecolor='red', facecolor='#e8dfdf')
-        plt.savefig(pic_name)
-        plt.close(fig)
-    pass
+    for ssm_no in np.arange(data.shape[0]):
+        for sample in samples_no:
+            pic_name = os.path.join(current_dir , 'batch_no({})_ssm_no({})_sample({})'.format(batch,ssm_no,sample))
+            time_range = pd.date_range(time_start[sample], periods=data.shape[2], freq=freq)
+            s1 = data[ssm_no , sample]
+            s2 = pred[ssm_no , sample]
+            fig = plt.figure(figsize=(28, 21))
+
+            ax = fig.add_subplot(1, 1, 1)
+            ax.set_title('EPOCHE({} prediction result)'.format(epoch), fontsize=18)
+            ax.plot(time_range, s1, linestyle='-', color='tab:green', marker='D', label='Truth')
+            ax.plot(time_range, s2, linestyle='-.', color='tab:blue', marker='o', label='prediction')
+            ax.xaxis.set_tick_params(labelsize=21)
+            ax.yaxis.set_tick_params(labelsize=21)
+            ax.legend(prop={'size': 31}, edgecolor='red', facecolor='#e8dfdf')
+            plt.savefig(pic_name)
+            plt.close(fig)
 
 def plot_train_pred_NoSSMnum(path, data, pred, batch, epoch,ssm_no, plot_num, time_start, freq):
     '''
