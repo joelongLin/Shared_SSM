@@ -193,28 +193,37 @@ class SharedSSM(object):
         # 放入可能出现的SSM参数
         #  A(transition)是对角矩阵表示在转移的时候尽可能保持不变, B(control) 和 C(emission) 从高斯分布中随机进行采样
         init = np.array([np.eye(self.config.dim_l).astype(np.float32) for _ in range(self.config.K)])  # (K, dim_z , dim_z)
-        init = np.tile(init, reps=(self.ssm_num, 1, 1, 1)) #(ssm_num , K , dim_z, dim_z)
+        init = np.tile(init, reps=(self.ssm_num, 1, 1, 1))
         A = tf.get_variable('A', initializer=init)
+        # A = tf.tile(tf.expand_dims(A,0), multiples=(self.ssm_num, 1, 1, 1))  # (ssm_num , K , dim_z, dim_z)
 
         init = np.array([self.config.init_kf_matrices * np.random.randn(self.config.dim_l, self.config.dim_u).astype(np.float32)
                       for _ in range(self.config.K)])
         init = np.tile(init, reps=(self.ssm_num, 1, 1, 1))
         B = tf.get_variable('B' , initializer=init)
+        # B = tf.tile(tf.expand_dims(B,0) , multiples=(self.ssm_num, 1, 1, 1))  # (ssm_num , K , dim_z, dim_z)
 
         init = np.array([self.config.init_kf_matrices * np.random.randn(self.config.dim_z, self.config.dim_l).astype(np.float32)
                       for _ in range(self.config.K)])
         init = np.tile(init, reps=(self.ssm_num, 1, 1, 1))
         C = tf.get_variable('C' , initializer=init)
+        # C = tf.tile(tf.expand_dims(C,0), multiples=(self.ssm_num, 1, 1, 1))  # (ssm_num , K , dim_z, dim_z)
 
         # Initial observed variable z_0
         init = np.zeros((self.config.dim_z,), dtype=np.float32)
-        z_0 = np.tile(init, reps=(self.ssm_num, 1))
+        # init = np.tile(init, reps=(self.ssm_num, 1))
+        z_0 = tf.get_variable('z_0' , initializer=init)
+        z_0 = tf.tile(tf.expand_dims(z_0,0) ,multiples=(self.ssm_num,1))
 
         # p(l_1) , SSM 隐空间的的的初始状态, mu , Sigma 分别代表 隐状态的 均值和方差
         mu = np.zeros((self.config.batch_size, self.config.dim_l), dtype=np.float32)
         mu = np.tile(mu, reps=(self.ssm_num, 1, 1)) #(ssm_num , bs , dim_l)
+        mu = tf.get_variable('mu' , initializer=mu)
+        # mu = tf.tile(tf.expand_dims(mu, 0), multiples=(self.ssm_num, 1, 1))
         Sigma = np.tile(self.config.init_cov * np.eye(self.config.dim_l, dtype=np.float32), (self.config.batch_size, 1, 1))
         Sigma = np.tile(Sigma, reps=(self.ssm_num, 1, 1, 1)) #(ssm_num , bs , dim_l , dim_l)
+        Sigma = tf.get_variable('Sigma' , initializer=Sigma)
+        # Sigma = tf.tile(tf.expand_dims(Sigma, 0), multiples=(self.ssm_num, 1, 1, 1))
 
         self.init_vars = dict(A=A, B=B, C=C, mu=mu, Sigma=Sigma, z_0=z_0)
 
@@ -309,16 +318,12 @@ class SharedSSM(object):
             observed_indicator = self.placeholders['past_env_observed'],
             seq_axis=1
         )#(bs ,seq , env_dim) , (bs , env_dim)
-        print('env_norm : ',env_norm ,'\nself.env_scale : ', self.env_scale)
 
         target_norm , self.target_scale , = self.scaler.build_forward(
             data = self.placeholders['past_target'],
             observed_indicator = self.placeholders['past_target_observed'],
             seq_axis=2
-        )#(bs , seq , ssm_num , 1) , (bs , ssm_num , 1)
-        print('target_norm : ',target_norm,'\nself.target_scale: ' , self.target_scale)
-        exit()
-
+        )#(ssm_num , bs , seq , 1) , (ssm_num ,bs , 1)
 
         # 一定要注意 Tensor 和 Variable 千万不能随意当成相同的东西
         # 对 time_feature 进行处理
@@ -327,7 +332,7 @@ class SharedSSM(object):
             inputs = self.placeholders['past_time_feature'],
             initial_state=None,
             dtype=tf.float32,
-        )  # (bs,seq_length ,hidden_dim)
+        )  # (bs,seq_length ,hidden_dim) layes x ([bs,h_dim],[bs,h_dim])
         eyes = tf.eye(self.config.dim_l)
         train_Q = self.noise_transition_model(time_rnn_out) #(bs, seq , 1)
         train_Q = tf.multiply(eyes , tf.expand_dims(train_Q , axis=-1))
@@ -354,7 +359,8 @@ class SharedSSM(object):
         dummy_lstm = tf.nn.rnn_cell.LSTMCell(self.config.alpha_units)
         alpha_lstm_init = dummy_lstm.zero_state(self.config.batch_size * self.ssm_num, tf.float32)
 
-        self.train_kf = MultiKalmanFilter(dim_l=self.config.dim_l,
+        self.train_kf = MultiKalmanFilter(ssm_num = self.ssm_num,
+                                          dim_l=self.config.dim_l,
                                           dim_z=self.config.dim_z,
                                           dim_u=self.config.dim_u,
                                           dim_k=self.config.K,
@@ -363,20 +369,29 @@ class SharedSSM(object):
                                           C=self.init_vars['C'],  # Measurement function
                                           R=train_R,  # measurement noise
                                           Q=train_Q,  # process noise
-                                          z=target_norm,  # output
+                                          z=target_norm,  # output 其实
                                           u = train_u,
                                           # mask 这里面会多一维度 (bs,seq , ssm_num ,1)
                                           mask=self.placeholders['past_target_observed'],
                                           mu=self.init_vars['mu'],
                                           Sigma=self.init_vars['Sigma'],
                                           z_0=self.init_vars['z_0'],
-                                          alpha=self.alpha,
+                                          alpha_fn=self.alpha,
                                           state = alpha_lstm_init
                                           )
 
-        pred_mean ,_, _, _, _, _ , self.alpha_train_last_state,self.filter_ll = self.train_kf.filter() #(ssm_num ,bs , seq) #(ssm_num, bs , seq ,1)
+        # z_pred_scaled(ssm_num ,bs , seq , 1)
+        # pred_l_0[(ssm_num, bs , seq ,dim_l),(ssm_num, bs , seq ,dim_l,dim_l)]
+        # pred_alpha_0 (ssm_num, bs ,K)
+        # filter_ll (ssm_num ,bs ,seq)
+        self.z_pred_scaled ,self.pred_l_0, self.pred_alpha_0 , alpha_train_states,self.filter_ll = self.train_kf.filter()
+        self.alpha_train_last_state = tf.nn.rnn_cell.LSTMStateTuple(
+            c=alpha_train_states.c[-1],
+            h=alpha_train_states.h[-1]
+        )
+
         # 计算 loss 的batch情况，但是加负号
-        self.pred_mean = tf.math.multiply(pred_mean , tf.expand_dims(self.target_scale , 1))
+        self.pred_mean = tf.math.multiply(self.z_pred_scaled , tf.expand_dims(self.target_scale , 2))
         self.filter_batch_nll_mean = tf.math.reduce_mean(
             tf.math.reduce_mean(-self.filter_ll, axis=-1)
             ,axis=0
@@ -392,9 +407,6 @@ class SharedSSM(object):
         return self
     def build_predict_forward(self):
         # 对预测域的数据先进行标准化(注：仅使用)
-        target_start = tf.math.divide(self.placeholders['pred_target'][:,:,-1,:] , self.target_scale)#(ssm_num, bs, seq ,1)
-        print('target_start 维度：' , target_start.shape)
-        exit()
         env_norm = tf.math.divide(self.placeholders['pred_environment'] , tf.expand_dims(self.env_scale,1))
         #首先,先对time_feature进行预测
         time_rnn_out, _ = tf.nn.dynamic_rnn(
@@ -402,7 +414,7 @@ class SharedSSM(object):
             inputs=self.placeholders['pred_time_feature'],
             initial_state=self.time_train_last_state,
             dtype=tf.float32,
-        )  # (bs,seq_length ,hidden_dim)
+        )  # (bs,pred ,hidden_dim)
         eyes = tf.eye(self.config.dim_l)
         pred_Q = self.noise_transition_model(time_rnn_out)  # (bs, pred , 1)
         pred_Q = tf.multiply(eyes, tf.expand_dims(pred_Q, axis=-1))
@@ -421,8 +433,10 @@ class SharedSSM(object):
             [model(env_rnn_out)
              for model in self.u_model],
             axis=0
-        )  # (ssm_num , bs ,seq , dim_u)
-        self.pred_kf = MultiKalmanFilter(dim_l=self.config.dim_l,
+        )  # (ssm_num , bs ,pred , dim_u)
+        print('pred network---环境变量生成的信息：' , pred_u)
+        self.pred_kf = MultiKalmanFilter( ssm_num = self.ssm_num,
+                                          dim_l=self.config.dim_l,
                                           dim_z=self.config.dim_z,
                                           dim_u=self.config.dim_u,
                                           dim_k=self.config.K,
@@ -432,14 +446,15 @@ class SharedSSM(object):
                                           R=pred_R,  # measurement noise
                                           Q=pred_Q,  # process noise
                                           u=pred_u,
-                                          # mask 这里面会多一维度 (bs,seq , ssm_num ,1)
-                                          mask=self.placeholders['pred_target_observed'],
-                                          mu=None,
-                                          Sigma=None,
-                                          z_0=None,# 使用train_kf里面的最后状态作为 pred的首状态
-                                          alpha=self.alpha,
+                                          alpha_0=self.pred_alpha_0,
+                                          mu=self.pred_l_0[0],
+                                          Sigma=self.pred_l_0[1],
+                                          alpha_fn=self.alpha,
                                           state=self.alpha_train_last_state
-                                          )
+                                      )
+        _,_,self.pred_z_mean , self.pred_z_cov,_,_,_,_,_ = self.pred_kf.compute_forwards_pred_mode()
+        #(pred ,ssm_num, bs, dim_z)
+        #(pred , ssm_num ,bs, dim_z, dim_z)
         return self
 
     def initialize_variables(self):
@@ -582,7 +597,6 @@ class SharedSSM(object):
         logging.getLogger().info("End models training")
 
     def predict(self):
-        exit()
         sess = self.sess
         self.all_forecast_result = []
         # 如果是 训练之后接着的 predict 直接采用之前 train 产生的save_path
@@ -636,14 +650,6 @@ class SharedSSM(object):
         pass
 
 
-
-def evaluate_up_down(ground_truth , mc_forecast):
-    # 0代表跌 1代表涨
-    ground_truth_labels = [1 if truth.iloc[-1].values[0] > truth.iloc[-2].values[0] else 0 for truth in ground_truth]
-    forecast_labels = [1 if mc_forecast[i].mean[0] > ground_truth[i].iloc[-2].values[0] else 0
-                       for i in range(len(mc_forecast))]
-    acc = accuracy_score(ground_truth_labels , forecast_labels)
-    return {'acc' : acc}
 
 # test code
 '''

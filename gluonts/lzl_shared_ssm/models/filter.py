@@ -10,8 +10,8 @@ class MultiKalmanFilter(object):
     network alpha.
     """
 
-    def __init__(self, dim_l, dim_z, dim_u=0, dim_k=1, **kwargs):
-
+    def __init__(self,ssm_num, dim_l, dim_z, dim_u=0, dim_k=1, **kwargs):
+        self.ssm_num = ssm_num
         self.dim_l = dim_l
         self.dim_z = dim_z  #stands for the target observation
         self.dim_u = dim_u  #stands for the enviroment input
@@ -22,25 +22,20 @@ class MultiKalmanFilter(object):
 
         # Pop all variables
         # 原代码 pop 初始化的维度都不对，所以删除
-        init = kwargs.pop('mu', None)
-        self.mu = tf.get_variable('mu', initializer=init, trainable=False)  # state
-
-        init = kwargs.pop('Sigma',None).astype(np.float32)
-        self.Sigma = tf.get_variable('Sigma', initializer=init, trainable=False)  # uncertainty covariance
+        self.mu = kwargs.pop('mu', None)
+        self.Sigma = kwargs.pop('Sigma',None)
 
         self.z_0 = kwargs.pop('z_0',None)
-        # self.z_0 = tf.get_variable('z_0', initializer=init)  # initial output
 
-        self.A  = kwargs.pop('A', None)
+        self.A  = kwargs.pop('A', None)  #(ssm_num , K , dim_l , dim_l)
 
-        self.B = kwargs.pop('B', None)
+        self.B = kwargs.pop('B', None) #(ssm_num , K , dim_l , dim_u)
 
-        self.Q = kwargs.pop('Q', None)
+        self.C = kwargs.pop('C', None) #(ssm_num , K , dim_z , dim_l)
 
-        self.C = kwargs.pop('C', None)
-        # self.C = tf.get_variable('C', initializer=init)   # Measurement function
+        self.Q = kwargs.pop('Q', None) #(ssm_num , bs ,seq ,dim_l , dim_l)
 
-        self.R = kwargs.pop('R', None)
+        self.R = kwargs.pop('R', None) #(ssm_num , bs, seq, dim_z , dim_z)
 
         self._alpha_sq = tf.constant(1., dtype=tf.float32) # fading memory control
         self.M = 0              # process-measurement cross correlation
@@ -61,7 +56,11 @@ class MultiKalmanFilter(object):
         if self.mask is None:
             self.mask = tf.placeholder(tf.float32, shape=(None, None), name='mask')
 
-        self.alpha_fn = kwargs.pop('alpha', None)
+        if self.z_0 == None:
+            self.alpha_0 = kwargs.pop('alpha_0', None) #(ssm_num, bs, K)
+            if self.alpha_0 is None:
+                self.alpha_0 = tf.placeholder(tf.float32, shape=(self.ssm_num ,None, self.dim_k), name='alpha_0')
+        self.alpha_fn = kwargs.pop('alpha_fn', None)
         self.state = kwargs.pop('state', None)
         self.log_likelihood = None
 
@@ -165,15 +164,6 @@ class MultiKalmanFilter(object):
                                               dummy_init_A, dummy_init_B, dummy_init_C),
                                  parallel_iterations=1, name='forward')
         return forward_states
-
-    def compute_forwards_with_pred_result(self):
-        '''
-        上面的 compute_forwards我觉得是用offline的方式取写online的算法
-        即：假设所有的 z 都给定了，然后你进行计算
-        而这里的方法，则是一开始不存在z ，所有的一切filter都使用预测之后的结果进行填充
-
-        :return:
-        '''
 
     def compute_backwards(self, forward_states):
         '''
@@ -289,14 +279,16 @@ class MultiKalmanFilter(object):
 
     def get_filter_log_p_seq(self, mu_pred, Sigma_pred, C):
         '''
-        :param mu_pred:  #(seq , ssm_num , bs , dim_l)
+        :param mu_pred:  #(seq , ssm_num , bs , dim_l) p(l_t | z(1:t-1))  t = 2,...,T+1
         :param Sigma_pred:  #(seq, ssm_num , bs , dim_l, dim_l)
         :param C : #(seq, ssm_num ,bs, dim_z , dim_l)
         :return: log_q_seq  #(ssm_num , bs , seq)
                  output_mean #(seq , ssm_num ,bs)
         '''
         # self.z  #(ssm_num ,bs, seq, dim_z)
-        # C_t  l_(t | t-1)
+        # C_t  l_(t | t-1) 使用第一个 mu
+        mu_pred = tf.concat([tf.expand_dims(self.mu,0) , mu_pred ] , axis=0)
+        Sigma_pred = tf.concat([tf.expand_dims(self.Sigma , 0) , Sigma_pred] , axis=0)
         output_mean = tf.squeeze(tf.matmul(C , tf.expand_dims(mu_pred,-1)) ,-1) #(seq, ssm_num ,bs , dim_z)
         R = tf.tile(tf.expand_dims(self.R, 0), [output_mean.shape[1], 1, 1, 1, 1]) #(ssm_num ,bs, seq , dim_l, dim_l)
         R = tf.transpose(R,[2,0,1,3,4])
@@ -319,21 +311,23 @@ class MultiKalmanFilter(object):
         p(l_t|z_(1:t))  期望以及方差
         A(t | z_(1:t))  B(t | z_(1:t))
         C(t | z_(1:t-1))
+        alpha(t | z_(1:t))
         alpha_lstm_last_state 用于作用在预测的时候
         '''
         #  暂时把compute forward 函数里面的reuse 给去除
         mu_pred, Sigma_pred, mu_filt, Sigma_filt, alpha, state,  A, B, C  = forward_states = \
             self.compute_forwards()
-        log_p_seq , output_mean = self.get_filter_log_p_seq(mu_pred, Sigma_pred, C) #(ssm_num ,bs, seq)
+        log_p_seq , z_pred_mean = self.get_filter_log_p_seq(mu_pred[:-1], Sigma_pred[:-1], C) #(ssm_num ,bs, seq)
         # TODO: 这里先把 filter 计算的结果赋给 MultiKalmanFilter 的一个属性
         self.log_likelihood =  log_p_seq
         forward_states = [mu_filt, Sigma_filt] #(seq , ssm_num ,bs , dim_l)  (seq , ssm_num , bs , dim_l , dim_l)
         # Swap batch dimension and time dimension
+        pred_state = [mu_pred[-1] , Sigma_pred[-1]]
         forward_states[0] = tf.transpose(forward_states[0], [1, 2, 0, 3])
         forward_states[1] = tf.transpose(forward_states[1], [1, 2, 0, 3 , 4])
-        return output_mean,tuple(forward_states), tf.transpose(A, [1, 2, 0, 3, 4]), tf.transpose(B, [1, 2, 0, 3, 4]), \
-               tf.transpose(C, [1, 2, 0, 3, 4]), tf.transpose(alpha, [1, 2, 0, 3]) , state \
-            , log_p_seq
+         # tuple(forward_states) , tf.transpose(A, [1, 2, 0, 3, 4]), tf.transpose(B, [1, 2, 0, 3, 4]),
+         #  tf.transpose(C, [1, 2, 0, 3, 4]), tf.transpose(alpha, [1, 2, 0, 3])
+        return z_pred_mean , pred_state, alpha[-1], state  , log_p_seq
 
     def smooth(self):
         backward_states, A, B, C, alpha = self.compute_backwards(self.compute_forwards())
@@ -359,6 +353,75 @@ class MultiKalmanFilter(object):
         sast = tf.transpose(sast, [0,1, 3, 2]) #(ssm_num , bs , dim_z , dim_u)
         sast = tf.matmul(K, sast) #(ssm_num , bs ,dim_l , dim_l )
         return sast
+
+
+
+    #以下代码适用于 prediction 的情境下使用
+    def forward_step_fn_pred_mode(self, params, inputs):
+        mu_pred, Sigma_pred,_,_,  alpha, state, _, _, C = params
+        u, Q, R = inputs #(ssm,bs,dim_u) (bs, dim_l, dim_l)
+        z_pred_mean=tf.squeeze(
+            tf.linalg.matmul(C ,tf.expand_dims(mu_pred,-1))
+             ,axis=-1
+        )#(ssm_num , bs, dim_z)
+        z_pred_cov = tf.linalg.matmul(
+            tf.linalg.matmul(C, Sigma_pred),
+            C, transpose_b=True
+        )+R
+
+
+        #TODO: 预测的时候，由于没有 ground Truth 所以暂时把模型生成的期望作为预测值放入 alpha网络中
+        alpha,state=self.alpha_fn(inputs = z_pred_mean, state=state)
+        A = tf.matmul(alpha, tf.reshape(self.A, [-1, alpha.shape[-1],
+                                                 self.dim_l * self.dim_l]))  # (ssm_num ,bs, k) x (ssm_num ,k, dim_l*dim_l)
+        A = tf.reshape(A, [alpha.shape[0], alpha.shape[1], self.dim_l, self.dim_l])  # (bs, dim_l, dim_l)
+        A.set_shape(Sigma_pred.get_shape())  # ( ssm_num , batch_size , dim_l , dim_l)
+
+        # Mixture of B
+        B = tf.matmul(alpha, tf.reshape(self.B, [-1, alpha.shape[-1],
+                                                 self.dim_l * self.dim_u]))  # (ssm_num ,bs, k) x (ssm_num ,k, dim_z*dim_l)
+        B = tf.reshape(B, [alpha.shape[0], alpha.shape[1], self.dim_l, self.dim_u])  # (ssm_num , bs, dim_z, dim_l)
+        B.set_shape([A.get_shape()[0], A.get_shape()[1], self.dim_l, self.dim_u])
+
+        # Mixture of C
+        C = tf.matmul(alpha, tf.reshape(self.C, [alpha.shape[0], -1,
+                                                 self.dim_z * self.dim_l]))  # (ssm_num ,bs, k) x (ssm_num , k , dim_z_ob*dim_z)
+        C = tf.reshape(C, [alpha.shape[0], alpha.shape[1], self.dim_z, self.dim_l])  # (ssm_num , bs, dim_z, dim_l)
+
+        mu_pred = tf.squeeze(tf.matmul(A, tf.expand_dims(mu_pred, -1)), -1) + tf.squeeze(
+            tf.matmul(B, tf.expand_dims(u, -1)), -1)  # (ssm_num , bs , dim_l)
+        Sigma_pred = tf.scalar_mul(self._alpha_sq, tf.matmul(tf.matmul(A, Sigma_pred), A,
+                                                         transpose_b=True) + Q)  # (ssm_num ,bs, dim_l, dim_l )
+
+        return mu_pred, Sigma_pred,z_pred_mean,z_pred_cov,  alpha, state, A, B, C
+
+    def compute_forwards_pred_mode(self, reuse=None):
+        '''
+        上面的 compute_forwards我觉得是用offline的方式取写online的算法
+        即：假设所有的 z 都给定了，然后你进行计算
+        而这里的方法，则是一开始不存在z ，所有的一切filter都使用预测之后的结果进行填充
+
+        :return:
+        '''
+        inputs = [tf.transpose(self.u, [2, 0, 1, 3]),
+                  tf.transpose(self.Q, [1, 0, 2, 3]),
+                  tf.transpose(self.R, [1, 0, 2, 3])
+                  ]
+        # 用于占位的矩阵 A B C
+        dummy_init_z_pred = tf.zeros([self.ssm_num,self.mu.shape[1],self.dim_z])
+        dummy_init_z_cov = tf.zeros([self.ssm_num,self.mu.shape[1],self.dim_z, self.dim_z])
+        dummy_init_A = tf.ones([self.ssm_num, self.Sigma.get_shape()[1], self.dim_l, self.dim_l])
+        dummy_init_B = tf.ones([self.ssm_num, self.Sigma.get_shape()[1], self.dim_l, self.dim_u])
+        _C = tf.matmul(self.alpha_0, tf.reshape(self.C, [self.alpha_0.shape[0], -1,
+                                                 self.dim_z * self.dim_l]))  # (ssm_num ,bs, k) x (ssm_num , k , dim_z_ob*dim_z)
+        _C = tf.reshape(_C, [self.alpha_0.shape[0], self.alpha_0.shape[1], self.dim_z, self.dim_l])  # (ssm_num , bs, dim_z, dim_l)
+        forward_states = tf.scan(self.forward_step_fn_pred_mode, inputs,
+                                 initializer=(self.mu, self.Sigma, dummy_init_z_pred,
+                                              dummy_init_z_cov,self.alpha_0, self.state,
+                                              dummy_init_A, dummy_init_B, _C),
+                                 parallel_iterations=1, name='forward_pred_mode')
+        return forward_states
+
 
 
 
