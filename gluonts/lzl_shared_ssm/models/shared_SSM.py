@@ -341,14 +341,12 @@ class SharedSSM(object):
             initial_state=None,
             dtype=tf.float32,
         )  # (bs,seq_length ,hidden_dim) layes x ([bs,h_dim],[bs,h_dim])
-        print('第一个运行正常....')
         target_time_rnn_out, self.target_time_train_last_state = tf.nn.dynamic_rnn(
             cell=self.time_feature_lstm,
             inputs=self.placeholders['target_past_time_feature'],
             initial_state=None,
             dtype=tf.float32,
         )  # (bs,seq_length ,hidden_dim) layes x ([bs,h_dim],[bs,h_dim])
-        print('第二个运行正常...')
         eyes = tf.eye(self.config.dim_l)
         train_Q = self.noise_transition_model(env_time_rnn_out) #(bs, seq , 1)
         train_Q = tf.multiply(eyes , tf.expand_dims(train_Q , axis=-1))
