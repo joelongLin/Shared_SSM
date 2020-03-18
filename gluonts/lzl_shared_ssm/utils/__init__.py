@@ -1,5 +1,7 @@
 from .config import (reload_config)
 from .tool_func import (
+    time_format_from_frequency_str,
+    create_dataset_if_not_exist,
     weighted_average,
     plot_train_pred,
     plot_train_epoch_loss,
@@ -17,6 +19,8 @@ from .func import (
 )
 from .distribution import MultivariateGaussian, Gaussian
 __all__ = [
+    'time_format_from_frequency_str',
+    'create_dataset_if_not_exist',
     'plot_train_pred',
     'plot_train_pred_NoSSMnum',
     'plot_train_epoch_loss',

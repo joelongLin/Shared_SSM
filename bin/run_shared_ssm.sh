@@ -7,6 +7,8 @@ reload_model=''
 target="btc,eth"
 environment='gold'
 logs_dir="logs/btc_eth(shared_ssm)"
+start='2018-08-02'
+maxlags='6'
 past_length='90'
 prediction_length='5'
 batch_size='32'
@@ -14,13 +16,13 @@ batch_num='30'
 epochs='50'
 for ((i=1;i<=1;i=i+1))#! repettion
 do
-    for drop_prob in 0.5, 0.1
+    for drop_prob in 0.5
     do
         for lr in 0.001
         do
         python gluonts/lzl_shared_ssm/run_main.py --gpu=$gpu --reload_model=$reload_model --logs_dir=$logs_dir \
-        --dropout_rate=$drop_prob --learning_rate=$lr --target=$target --environment=$environment \
-        --past_length=$past_length --pred_length=$prediction_length --batch_size=$batch_size \
+        --dropout_rate=$drop_prob --learning_rate=$lr --target=$target --environment=$environment --maxlags=$maxlags \
+        --start=$start --past_length=$past_length --pred_length=$prediction_length --batch_size=$batch_size \
         --num_batches_per_epoch=$batch_num --epochs=$epochs
         done
     done

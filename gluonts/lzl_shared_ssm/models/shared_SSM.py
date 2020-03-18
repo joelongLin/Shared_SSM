@@ -11,6 +11,7 @@ import logging
 import matplotlib
 matplotlib.use('Agg') # 用这句话避免 xshell 调参时，出现X11转发
 from gluonts.time_feature import time_features_from_frequency_str
+from ..utils import time_format_from_frequency_str
 from gluonts.model.forecast import SampleForecast
 from gluonts.transform import (Chain ,
                                AddInitTimeFeature,
@@ -22,6 +23,7 @@ from gluonts.transform.sampler import TestSplitSampler
 from gluonts.dataset.field_names import FieldName
 from .scaler import MeanScaler , NOPScaler
 from .filter import MultiKalmanFilter
+from ..utils import create_dataset_if_not_exist
 from .data_loader import TrainDataLoader_OnlyPast ,InferenceDataLoader_WithFuture, mergeIterOut , stackIterOut
 from ..utils import del_previous_model_params , plot_train_epoch_loss , plot_train_pred
 
@@ -45,8 +47,10 @@ class SharedSSM(object):
             "past_env_observed": tf.placeholder(dtype=tf.float32,shape=[config.batch_size, config.past_length, self.env_dim],name="past_env_observed"),
             "pred_environment" : tf.placeholder(dtype=tf.float32, shape=[config.batch_size ,config.pred_length,self.env_dim], name="pred_environment"),
             "pred_env_observed" : tf.placeholder(dtype=tf.float32, shape=[config.batch_size ,config.pred_length,self.env_dim], name="pred_env_observed"),
-            "past_time_feature": tf.placeholder(dtype=tf.float32,shape=[config.batch_size, config.past_length, self.time_dim],name="past_time_feature"),
-            "pred_time_feature": tf.placeholder(dtype=tf.float32,shape=[config.batch_size, config.pred_length, self.time_dim],name="pred_time_feature"),
+            "env_past_time_feature": tf.placeholder(dtype=tf.float32,shape=[config.batch_size, config.past_length, self.time_dim],name="env_past_time_feature"),
+            "env_pred_time_feature": tf.placeholder(dtype=tf.float32,shape=[config.batch_size, config.pred_length, self.time_dim],name="env_pred_time_feature"),
+            "target_past_time_feature": tf.placeholder(dtype=tf.float32,shape=[ config.batch_size, config.past_length, self.time_dim],name="target_past_time_feature"),
+            "target_pred_time_feature": tf.placeholder(dtype=tf.float32,shape=[ config.batch_size, config.pred_length, self.time_dim],name="target_pred_time_feature"),
             "past_target" : tf.placeholder(dtype=tf.float32, shape=[self.ssm_num ,config.batch_size , config.past_length, 1], name="past_target"),
             "past_target_observed" : tf.placeholder(dtype=tf.float32, shape=[self.ssm_num ,config.batch_size , config.past_length, 1], name="past_target_observed"),
             "pred_target" : tf.placeholder(dtype=tf.float32, shape=[self.ssm_num ,config.batch_size ,config.pred_length, 1], name="pred_target"),
@@ -57,39 +61,42 @@ class SharedSSM(object):
     def load_original_data(self):
         name_prefix = 'data_process/processed_data/{}_{}_{}_{}.pkl'
         # 导入 target 以及 environment 的数据
-        ds_names = ','.join([self.config.target,self.config.environment])
         if self.config.slice == 'overlap':
             series = self.config.timestep - self.config.past_length - self.config.pred_length + 1
             print('每个数据集的序列数量为 ,', series)
-        target_path = [name_prefix.format(
-            name, '%s_DsSeries_%d' % (self.config.slice, series),
-                           'train_%d' % self.config.past_length, 'pred_%d' % self.config.pred_length,
-        ) for name in self.config.target.split(',')]
-        env_path = [name_prefix.format(
-            name, '%s_DsSeries_%d' % (self.config.slice, series),
-                           'train_%d' % self.config.past_length, 'pred_%d' % self.config.pred_length,
-        ) for name in self.config.environment.split(',')]
+        if self.config.slice == 'nolap':
+            series = self.config.timestep // (self.config.past_length + self.config.pred_length)
+            print('每个数据集的序列数量为 ,', series)
+        # 目标序列的数据路径
+        target_path = {name:name_prefix.format(
+            '%s_start(%s)'%(name, self.config.start), '%s_DsSeries_%d' % (self.config.slice, series),
+            'train_%d' % self.config.past_length, 'pred_%d' % self.config.pred_length,
+        ) for name in self.config.target.split(',')}
+        target_start = pd.Timestamp(self.config.start).to_period(freq=self.config.freq)
+        env_start = target_start - self.config.maxlags * target_start.freq
+        env_start = env_start.to_timestamp().strftime(time_format_from_frequency_str(self.config.freq))
+        print('environment 开始的时间：', env_start)
+        env_path = {name : name_prefix.format(
+            '%s_start(%s)'%(name, env_start), '%s_DsSeries_%d' % (self.config.slice, series),
+            'train_%d' % self.config.past_length, 'pred_%d' % self.config.pred_length,
+        ) for name in self.config.environment.split(',')}
 
+        create_dataset_if_not_exist(
+            paths=target_path,start=self.config.start ,past_length=self.config.past_length
+            , pred_length=self.config.pred_length,slice=self.config.slice
+            , timestep=self.config.timestep, freq=self.config.freq
+        )
 
-        for path in target_path+env_path:
-            # 循环 path 的时候 需要 得到当前 path 对应的 ds_name
-            for ds_name in ds_names.split(','):
-                if ds_name in path:
-                    break
-            if not os.path.exists(path) :
-                logging.info('there is no dataset [%s] , creating...'%ds_name)
-                os.system('python data_process/preprocessing.py -d={} -t={} -p={} -s={} -n={} -f={}'
-                          .format(ds_name
-                              , self.config.past_length
-                              , self.config.pred_length
-                              , self.config.slice
-                              , self.config.timestep
-                              , self.config.freq))
-            else:
-                logging.info(' dataset [%s] was found , good~~~' % ds_name)
+        create_dataset_if_not_exist(
+            paths=env_path, start=env_start, past_length=self.config.past_length
+            , pred_length=self.config.pred_length, slice=self.config.slice
+            , timestep=self.config.timestep, freq=self.config.freq
+        )
+
         self.target_data , self.env_data = [] , []
         # 由于 target 应该都是 dim = 1 只是确定有多少个 SSM 而已
-        for target in target_path:
+        for target_name in target_path:
+            target = target_path[target_name]
             with open(target, 'rb') as fp:
                 target_ds = pickle.load(fp)
                 assert target_ds.metadata['dim'] == 1 , 'target 序列的维度都应该为1'
@@ -97,7 +104,8 @@ class SharedSSM(object):
 
         self.ssm_num = len(self.target_data)
         self.env_dim = 0
-        for env in env_path:
+        for env_name in env_path:
+            env =  env_path[env_name]
             with open(env, 'rb') as fp:
                 env_ds = pickle.load(fp)
                 self.env_dim += env_ds.metadata['dim']
@@ -173,19 +181,17 @@ class SharedSSM(object):
         )) for i in range(len(self.target_data))]
 
         self.env_train_loader = mergeIterOut(env_train_iters,
-                                             fields=[FieldName.OBSERVED_VALUES , FieldName.FEAT_TIME , FieldName.TARGET],
+                                             fields=[FieldName.OBSERVED_VALUES , FieldName.TARGET],
                                              include_future=True)
         self.target_train_loader = stackIterOut(target_train_iters,
-                                                fields=[FieldName.OBSERVED_VALUES , FieldName.FEAT_TIME
-                                                    , FieldName.TARGET],
+                                                fields=[FieldName.OBSERVED_VALUES  , FieldName.TARGET],
                                                 dim=0,
                                                 include_future=False)
         self.env_test_loader = mergeIterOut(env_test_iters,
-                                            fields=[FieldName.OBSERVED_VALUES , FieldName.FEAT_TIME , FieldName.TARGET],
+                                            fields=[FieldName.OBSERVED_VALUES , FieldName.TARGET],
                                             include_future=True)
         self.target_test_loader = stackIterOut(target_test_iters,
-                                               fields=[FieldName.OBSERVED_VALUES, FieldName.FEAT_TIME,
-                                                        FieldName.TARGET ],
+                                               fields=[FieldName.OBSERVED_VALUES, FieldName.TARGET ],
                                                dim=0,
                                                include_future=True)
 
@@ -232,6 +238,7 @@ class SharedSSM(object):
         else:
             self.scaler = NOPScaler(keepdims=False)
 
+        # TODO: time_feature 是否要用两个不同的lstm ？
         with tf.variable_scope('time_feature_exactor', initializer=tf.contrib.layers.xavier_initializer() ) :
             self.time_feature_lstm = []
             for k in range(self.config.time_exact_layers):
@@ -247,7 +254,7 @@ class SharedSSM(object):
             self.time_feature_lstm = tf.nn.rnn_cell.MultiRNNCell(self.time_feature_lstm)
             # self.time_feature_lstm = tf.nn.rnn_cell.BasicLSTMCell(self.time_feature_lstm)
 
-            # TODO: 关于 noise 的大小是否要 限定在 0 和 1 之间，也值得讨论
+            # 关于 noise 的大小是否要 限定在 0 和 1 之间，也值得讨论
             self.noise_emission_model = tf.layers.Dense(units=1, dtype=tf.float32, name='noise_emission' , activation=tf.nn.softmax)
             self.noise_transition_model = tf.layers.Dense(units=1 , dtype=tf.float32 , name='noise_transition' , activation=tf.nn.softmax)
 
@@ -327,16 +334,25 @@ class SharedSSM(object):
 
         # 一定要注意 Tensor 和 Variable 千万不能随意当成相同的东西
         # 对 time_feature 进行处理
-        time_rnn_out, self.time_train_last_state = tf.nn.dynamic_rnn(
+        # TODO: 现在假设 transition的噪声又 environment的时间特征决定， emission的噪声由 target的时间特征决定
+        env_time_rnn_out, self.env_time_train_last_state = tf.nn.dynamic_rnn(
             cell=self.time_feature_lstm,
-            inputs = self.placeholders['past_time_feature'],
+            inputs = self.placeholders['env_past_time_feature'],
             initial_state=None,
             dtype=tf.float32,
         )  # (bs,seq_length ,hidden_dim) layes x ([bs,h_dim],[bs,h_dim])
+        print('第一个运行正常....')
+        target_time_rnn_out, self.target_time_train_last_state = tf.nn.dynamic_rnn(
+            cell=self.time_feature_lstm,
+            inputs=self.placeholders['target_past_time_feature'],
+            initial_state=None,
+            dtype=tf.float32,
+        )  # (bs,seq_length ,hidden_dim) layes x ([bs,h_dim],[bs,h_dim])
+        print('第二个运行正常...')
         eyes = tf.eye(self.config.dim_l)
-        train_Q = self.noise_transition_model(time_rnn_out) #(bs, seq , 1)
+        train_Q = self.noise_transition_model(env_time_rnn_out) #(bs, seq , 1)
         train_Q = tf.multiply(eyes , tf.expand_dims(train_Q , axis=-1))
-        train_R = self.noise_emission_model(time_rnn_out) #(bs, seq , 1)
+        train_R = self.noise_emission_model(target_time_rnn_out) #(bs, seq , 1)
         train_R = tf.expand_dims(train_R , axis=-1)
 
         print('train network---生成噪声 Q shape : {} , R shape : {}'.format(train_Q.shape , train_R.shape))
@@ -408,17 +424,23 @@ class SharedSSM(object):
     def build_predict_forward(self):
         # 对预测域的数据先进行标准化(注：仅使用)
         env_norm = tf.math.divide(self.placeholders['pred_environment'] , tf.expand_dims(self.env_scale,1))
-        #首先,先对time_feature进行预测
-        time_rnn_out, _ = tf.nn.dynamic_rnn(
+        #首先,先对time_feature进行利用
+        env_time_rnn_out, _ = tf.nn.dynamic_rnn(
             cell=self.time_feature_lstm,
-            inputs=self.placeholders['pred_time_feature'],
-            initial_state=self.time_train_last_state,
+            inputs=self.placeholders['env_pred_time_feature'],
+            initial_state=self.env_time_train_last_state,
+            dtype=tf.float32,
+        )  # (bs,pred ,hidden_dim)
+        target_time_rnn_out, _ = tf.nn.dynamic_rnn(
+            cell=self.time_feature_lstm,
+            inputs=self.placeholders['target_pred_time_feature'],
+            initial_state=self.target_time_train_last_state,
             dtype=tf.float32,
         )  # (bs,pred ,hidden_dim)
         eyes = tf.eye(self.config.dim_l)
-        pred_Q = self.noise_transition_model(time_rnn_out)  # (bs, pred , 1)
+        pred_Q = self.noise_transition_model(env_time_rnn_out)  # (bs, pred , 1)
         pred_Q = tf.multiply(eyes, tf.expand_dims(pred_Q, axis=-1))
-        pred_R = self.noise_emission_model(time_rnn_out)  # (bs, pred , 1)
+        pred_R = self.noise_emission_model(target_time_rnn_out)  # (bs, pred , 1)
         pred_R = tf.expand_dims(pred_R, axis=-1)
         print('pred network---生成噪声 Q shape : {} , R shape : {}'.format(pred_Q.shape , pred_R.shape))
 
@@ -456,6 +478,7 @@ class SharedSSM(object):
         #(pred ,ssm_num, bs, dim_z)
         #(pred , ssm_num ,bs, dim_z, dim_z)
         return self
+        exit()
 
     def initialize_variables(self):
         """ Initialize variables or load saved models
@@ -484,6 +507,7 @@ class SharedSSM(object):
         self.log_path = os.path.join(self.config.logs_dir,
                                    '_'.join([
                                                 'freq(%s)'%(self.config.freq),
+                                                'lags(%d)'%(self.config.maxlags),
                                                'past(%d)'%(self.config.past_length)
                                                 ,'pred(%d)'%(self.config.pred_length)
                                                 , 'u(%d)' % (self.config.dim_u)
@@ -528,7 +552,8 @@ class SharedSSM(object):
                     feed_dict = {
                         self.placeholders['past_environment'] : env_batch_input['past_target'],
                         self.placeholders['past_env_observed'] : env_batch_input['past_%s' % (FieldName.OBSERVED_VALUES)],
-                        self.placeholders['past_time_feature'] : env_batch_input['past_time_feat'],
+                        self.placeholders['env_past_time_feature'] : env_batch_input['past_time_feat'],
+                        self.placeholders['target_past_time_feature'] : target_batch_input['past_time_feat'],
                         self.placeholders['past_target'] : target_batch_input['past_target'],
                         self.placeholders['past_target_observed'] : target_batch_input['past_%s' % (FieldName.OBSERVED_VALUES)]
                     }

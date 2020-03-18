@@ -1,3 +1,5 @@
+from gluonts.dataset.util import to_pandas
+import logging
 import tensorflow as tf
 import pandas as pd
 import matplotlib
@@ -5,6 +7,77 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import os
 import numpy as np
+from pandas.tseries import offsets
+from pandas.tseries.frequencies import to_offset
+
+def time_format_from_frequency_str(freq_str: str) :
+    """
+    根据freq str 返回合适的 time_stamp format
+    Parameters
+    ----------
+
+    freq_str
+        Frequency string of the form [multiple][granularity] such as "12H", "5min", "1D" etc.
+        B       business day frequency
+        C       custom business day frequency (experimental)
+        D       calendar day frequency
+        W       weekly frequency
+        M       month end frequency
+        BM      business month end frequency
+        CBM     custom business month end frequency
+        MS      month start frequency
+        BMS     business month start frequency
+        CBMS    custom business month start frequency
+        Q       quarter end frequency
+        BQ      business quarter endfrequency
+        QS      quarter start frequency
+        BQS     business quarter start frequency
+        A       year end frequency
+        BA      business year end frequency
+        AS      year start frequency
+        BAS     business year start frequency
+        BH      business hour frequency
+        H       hourly frequency
+        T, min  minutely frequency
+        S       secondly frequency
+        L, ms   milliseonds
+        U, us   microseconds
+        N       nanoseconds
+
+    """
+
+    features_by_offsets = {
+        offsets.YearOffset: '%Y',
+        offsets.MonthOffset: '%Y-%m',
+        offsets.Week: '%Y-%W',
+        offsets.Day: '%Y-%m-%d',
+        offsets.BusinessDay: '%Y-%m-%d',
+        offsets.Hour: '%Y-%m-%d %H',
+        offsets.Minute: '%Y-%m-%d %H:%M',
+    }
+
+    offset = to_offset(freq_str)
+
+    for offset_type, format_pattern in features_by_offsets.items():
+        if isinstance(offset, offset_type):
+            return format_pattern
+
+
+def create_dataset_if_not_exist(paths, start, past_length , pred_length , slice , timestep , freq):
+    for name in paths:
+        path = paths[name]
+        if not os.path.exists(path):
+            logging.info('there is no dataset [%s] , creating...' % name)
+            os.system('python data_process/preprocessing.py -st={} -d={} -t={} -p={} -s={} -n={} -f={}'
+                      .format( start
+                              , name
+                              , past_length
+                              , pred_length
+                              , slice
+                              , timestep
+                              , freq))
+        else:
+            logging.info(' dataset [%s] was found , good~~~' % name)
 
 def weighted_average(
    metrics, weights = None, axis=None
@@ -131,3 +204,22 @@ def del_previous_model_params(path):
                 or files.endswith(".index") \
                 or files.endswith(".meta"):
             os.remove(os.path.join(path,files))
+
+
+# 画原有序列
+def plot_original(train_entry , test_entry , no):
+    test_series = to_pandas(test_entry)
+    train_series = to_pandas(train_entry)
+
+    fig, ax = plt.subplots(2, 1, sharex=True, sharey=True, figsize=(10, 7))
+
+    train_series.plot(ax=ax[0])
+    ax[0].grid(which="both")
+    ax[0].legend(["train series"], loc="upper left")
+
+    test_series.plot(ax=ax[1])
+    ax[1].axvline(train_series.index[-1], color='r')  # end of train dataset
+    ax[1].grid(which="both")
+    ax[1].legend(["test series", "end of train series"], loc="upper left")
+
+    plt.savefig('pic/original_entry_{}.png'.format(no))

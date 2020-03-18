@@ -45,6 +45,7 @@ cl.DEFINE_integer('time_exact_cells' ,40 , 'hidden units size of lstm cell')
 cl.DEFINE_string('time_cell_type' , 'lstm' , 'Type of recurrent cells to use (available: "lstm" or "gru"')
 
 # shared environment network configuration
+cl.DEFINE_integer('maxlags' , 6 , 'the time lag between environment variable and target variable')
 cl.DEFINE_integer('env_exact_layers' ,2,'num of lstm cell layers')
 cl.DEFINE_integer('env_exact_cells' ,50 , 'hidden units size of lstm cell')
 cl.DEFINE_string('env_cell_type' , 'lstm' , 'Type of recurrent cells to use (available: "lstm" or "gru"')
@@ -58,6 +59,7 @@ cl.DEFINE_integer('alpha_units', 50, 'Number of units in alpha network')
 cl.DEFINE_bool('scaling' , True , 'whether use Mean Scaler to preprocess the data')
 cl.DEFINE_string('target' , 'btc,eth' , 'Name of the target dataset')
 cl.DEFINE_string('environment' , 'gold' , 'Name of the dataset ')
+cl.DEFINE_string('start' , '2018-08-02' ,'start of the training range')
 cl.DEFINE_integer('timestep' , 503 , 'length of the series') #这个序列的长度实际上也决定了样本数量的大小
 cl.DEFINE_string('slice' , 'overlap' , 'how to slice the dataset')
 cl.DEFINE_string('freq','1D','Frequency of the data to train on and predict')
@@ -80,7 +82,6 @@ def main(_):
     config = reload_config(config)
     configuration = tf.compat.v1.ConfigProto()
     configuration.gpu_options.allow_growth = True
-
 
     with tf.compat.v1.Session(config=configuration) as sess:
         sharedSSM = SharedSSM(config=config, sess=sess)\
