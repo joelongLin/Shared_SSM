@@ -5,11 +5,12 @@ import pandas as pd
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+from gluonts.dataset.field_names import FieldName
 import os
 import numpy as np
 from pandas.tseries import offsets
 from pandas.tseries.frequencies import to_offset
-
+TARGET_DIM = 4
 def time_format_from_frequency_str(freq_str: str) :
     """
     根据freq str 返回合适的 time_stamp format
@@ -115,8 +116,8 @@ def plot_train_pred(path, data, pred, batch, epoch, plot_num, time_start, freq):
     pred = np.squeeze(pred ,-1)
     root_path = os.path.join(path , 'train_pred_pic')
     #当前采样
-    ssm_no = np.random.choice(np.arange(data.shape[0]) , 1)[0] # 如果不进行slice会导致后面值多一维度
     samples_no = np.random.choice(np.arange(data.shape[1]) , plot_num)
+    print('当前 batch size :' , data.shape[1])
     current_dir = os.path.join(root_path, 'epoch({})'.format(epoch))
     if not os.path.isdir(current_dir):
         os.makedirs(current_dir)
@@ -129,7 +130,7 @@ def plot_train_pred(path, data, pred, batch, epoch, plot_num, time_start, freq):
             fig = plt.figure(figsize=(28, 21))
 
             ax = fig.add_subplot(1, 1, 1)
-            ax.set_title('EPOCHE({} prediction result)'.format(epoch), fontsize=18)
+            ax.set_title('EPOCHE({} prediction result)'.format(epoch), fontsize=30)
             ax.plot(time_range, s1, linestyle='-', color='tab:green', marker='D', label='Truth')
             ax.plot(time_range, s2, linestyle='-.', color='tab:blue', marker='o', label='prediction')
             ax.xaxis.set_tick_params(labelsize=21)
@@ -189,6 +190,31 @@ def plot_train_epoch_loss(
            title='epoch information when training')
     plt.savefig(os.path.join(path , 'train.png'))
     plt.close(fig)
+
+def complete_batch(batch,batch_size):
+    # 对每一个 key都进行处理
+    if len(batch[FieldName.START]) == batch_size:
+        return batch , batch_size
+    for attr in batch.keys():
+        batch_value = batch[attr]
+        if isinstance(batch_value , list):
+            batch_num = len(batch_value)
+            print('补全之前：', attr, '---->', batch_num)
+            batch[attr] = batch_value + [batch_value[-1]]*(batch_size-batch_num)
+            print('补全之后：', attr, '---->', len(batch[attr]))
+        elif isinstance(batch_value, np.ndarray):
+            print('补全之前：', attr, '---->', batch[attr].shape)
+            #表示所有非四维的
+            if len(batch_value.shape) != TARGET_DIM:
+                batch_num = batch_value.shape[0]
+                complete_shape = [batch_size-batch_num]+list(batch_value.shape[1:])
+                batch[attr] = np.concatenate([batch_value , np.zeros(shape=complete_shape)], axis=0)
+            else:
+                batch_num = batch_value.shape[1]
+                complete_shape = [batch_value.shape[0],batch_size - batch_num] + list(batch_value.shape[2:])
+                batch[attr] = np.concatenate([batch_value, np.zeros(shape=complete_shape)], axis=1)
+            print('补全之后：', attr, '---->', batch[attr].shape)
+    return batch ,batch_num
 
 
 def del_previous_model_params(path):

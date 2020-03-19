@@ -6,7 +6,8 @@ from .tool_func import (
     plot_train_pred,
     plot_train_epoch_loss,
     plot_train_pred_NoSSMnum,
-    del_previous_model_params
+    del_previous_model_params,
+    complete_batch
 )
 from .func import (
     make_nd_diag
@@ -21,6 +22,7 @@ from .distribution import MultivariateGaussian, Gaussian
 __all__ = [
     'time_format_from_frequency_str',
     'create_dataset_if_not_exist',
+    'complete_batch',
     'plot_train_pred',
     'plot_train_pred_NoSSMnum',
     'plot_train_epoch_loss',

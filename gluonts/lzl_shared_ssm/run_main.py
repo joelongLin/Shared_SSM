@@ -45,7 +45,7 @@ cl.DEFINE_integer('time_exact_cells' ,40 , 'hidden units size of lstm cell')
 cl.DEFINE_string('time_cell_type' , 'lstm' , 'Type of recurrent cells to use (available: "lstm" or "gru"')
 
 # shared environment network configuration
-cl.DEFINE_integer('maxlags' , 6 , 'the time lag between environment variable and target variable')
+cl.DEFINE_integer('maxlags' , 0 , 'the time lag between environment variable and target variable')
 cl.DEFINE_integer('env_exact_layers' ,2,'num of lstm cell layers')
 cl.DEFINE_integer('env_exact_cells' ,50 , 'hidden units size of lstm cell')
 cl.DEFINE_string('env_cell_type' , 'lstm' , 'Type of recurrent cells to use (available: "lstm" or "gru"')
@@ -79,7 +79,7 @@ def main(_):
     config = cl.FLAGS
     os.environ["CUDA_VISIBLE_DEVICES"] = config.gpu
     print('reload models : ' , config.reload_model)
-    config = reload_config(config)
+    # config = reload_config(config)
     configuration = tf.compat.v1.ConfigProto()
     configuration.gpu_options.allow_growth = True
 
@@ -87,7 +87,7 @@ def main(_):
         sharedSSM = SharedSSM(config=config, sess=sess)\
             .build_module().build_train_forward().build_predict_forward().initialize_variables()
         sharedSSM.train()
-        # sharedSSM.predict()
+        sharedSSM.predict()
         # sharedSSM.evaluate()
 
 

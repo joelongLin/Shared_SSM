@@ -8,12 +8,12 @@ target="btc,eth"
 environment='gold'
 logs_dir="logs/btc_eth(shared_ssm)"
 start='2018-08-02'
-maxlags='6'
+maxlags='0'
 past_length='90'
 prediction_length='5'
 batch_size='32'
-batch_num='30'
-epochs='50'
+batch_num='13'
+epochs='2'
 for ((i=1;i<=1;i=i+1))#! repettion
 do
     for drop_prob in 0.5

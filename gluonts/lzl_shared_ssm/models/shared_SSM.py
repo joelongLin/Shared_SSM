@@ -23,7 +23,7 @@ from gluonts.transform.sampler import TestSplitSampler
 from gluonts.dataset.field_names import FieldName
 from .scaler import MeanScaler , NOPScaler
 from .filter import MultiKalmanFilter
-from ..utils import create_dataset_if_not_exist
+from ..utils import create_dataset_if_not_exist , complete_batch
 from .data_loader import TrainDataLoader_OnlyPast ,InferenceDataLoader_WithFuture, mergeIterOut , stackIterOut
 from ..utils import del_previous_model_params , plot_train_epoch_loss , plot_train_pred
 
@@ -72,9 +72,9 @@ class SharedSSM(object):
             '%s_start(%s)'%(name, self.config.start), '%s_DsSeries_%d' % (self.config.slice, series),
             'train_%d' % self.config.past_length, 'pred_%d' % self.config.pred_length,
         ) for name in self.config.target.split(',')}
-        target_start = pd.Timestamp(self.config.start).to_period(freq=self.config.freq)
+        target_start = pd.Timestamp(self.config.start,freq=self.config.freq)
         env_start = target_start - self.config.maxlags * target_start.freq
-        env_start = env_start.to_timestamp().strftime(time_format_from_frequency_str(self.config.freq))
+        env_start = env_start.strftime(time_format_from_frequency_str(self.config.freq))
         print('environment 开始的时间：', env_start)
         env_path = {name : name_prefix.format(
             '%s_start(%s)'%(name, env_start), '%s_DsSeries_%d' % (self.config.slice, series),
@@ -124,7 +124,7 @@ class SharedSSM(object):
             ),
             SwapAxes(
                 input_fields=[FieldName.TARGET],
-                axes=[0,1],
+                axes=(0,1),
             ),
             AddObservedValuesIndicator(
                 target_field = FieldName.TARGET,
@@ -157,6 +157,7 @@ class SharedSSM(object):
         ])
         print('已设置时间特征~~')
         # 设置环境变量的 dataloader
+        #self.config.batch_size
         env_train_iters = [iter(TrainDataLoader_OnlyPast(
             dataset = self.env_data[i].train,
             transform = transformation,
@@ -405,7 +406,7 @@ class SharedSSM(object):
         )
 
         # 计算 loss 的batch情况，但是加负号
-        self.pred_mean = tf.math.multiply(self.z_pred_scaled , tf.expand_dims(self.target_scale , 2))
+        self.train_z_mean = tf.math.multiply(self.z_pred_scaled, tf.expand_dims(self.target_scale, 2))
         self.filter_batch_nll_mean = tf.math.reduce_mean(
             tf.math.reduce_mean(-self.filter_ll, axis=-1)
             ,axis=0
@@ -420,7 +421,7 @@ class SharedSSM(object):
 
         return self
     def build_predict_forward(self):
-        # 对预测域的数据先进行标准化(注：仅使用)
+        # 对预测域的数据先进行标准化(注：仅使用训练域的 mean 进行 scale)
         env_norm = tf.math.divide(self.placeholders['pred_environment'] , tf.expand_dims(self.env_scale,1))
         #首先,先对time_feature进行利用
         env_time_rnn_out, _ = tf.nn.dynamic_rnn(
@@ -472,11 +473,12 @@ class SharedSSM(object):
                                           alpha_fn=self.alpha,
                                           state=self.alpha_train_last_state
                                       )
-        _,_,self.pred_z_mean , self.pred_z_cov,_,_,_,_,_ = self.pred_kf.compute_forwards_pred_mode()
+        _, _, self.pred_z_mean_scaled , self.pred_z_cov, _, _, _, _, _ = self.pred_kf.compute_forwards_pred_mode()
+        self.pred_z_mean_scaled = tf.transpose(self.pred_z_mean_scaled, [1,2,0,3])
+        self.pred_z_cov = tf.transpose(self.pred_z_cov , [1,2,0,3,4])
         #(pred ,ssm_num, bs, dim_z)
         #(pred , ssm_num ,bs, dim_z, dim_z)
         return self
-        exit()
 
     def initialize_variables(self):
         """ Initialize variables or load saved models
@@ -487,9 +489,9 @@ class SharedSSM(object):
 
         # Initialize or reload variables
         if self.config.reload_model is not '':
-            print("Restoring model in %s" % self.config.reload_model)
-            params_path = os.path.join(self.config.reload_model , "model_params")
-            param_name = os.listdir(params_path)[0].split('.')[0]
+            params_path = os.path.join(self.config.logs_dir, self.config.reload_model, "model_params")
+            print("Restoring model in %s" % params_path)
+            param_name = os.path.splitext(os.listdir(params_path)[0])[0]
             params_path = os.path.join(params_path, param_name)
             self.saver.restore(self.sess, params_path)
         else:
@@ -500,9 +502,10 @@ class SharedSSM(object):
     def train(self):
         #如果导入已经有的信息,不进行训练
         if self.config.reload_model != '':
+            print('有已经训练好的参数,不需要训练~~~~~')
             return
         sess = self.sess
-        self.log_path = os.path.join(self.config.logs_dir,
+        self.train_log_path = os.path.join(self.config.logs_dir,
                                    '_'.join([
                                                 'freq(%s)'%(self.config.freq),
                                                 'lags(%d)'%(self.config.maxlags),
@@ -526,9 +529,9 @@ class SharedSSM(object):
                                                 , 'dropout(%s)' % (str(self.config.dropout_rate))
                                              ]
                                         )
-                                     )
-        if not os.path.isdir(self.log_path):
-            os.makedirs(self.log_path)
+                                           )
+        if not os.path.isdir(self.train_log_path):
+            os.makedirs(self.train_log_path)
         num_batches = self.config.num_batches_per_epoch
         best_epoch_info = {
             'epoch_no': -1,
@@ -547,6 +550,7 @@ class SharedSSM(object):
                     env_batch_input  = next(self.env_train_loader)
                     target_batch_input = next(self.target_train_loader)
                     # print('第 ',batch_no,'的env_batch_input["past_target"]:',  env_batch_input['past_target'].shape)
+                    #np.zeros(env_batch_input['past_target'].shape)
                     feed_dict = {
                         self.placeholders['past_environment'] : env_batch_input['past_target'],
                         self.placeholders['past_env_observed'] : env_batch_input['past_%s' % (FieldName.OBSERVED_VALUES)],
@@ -560,9 +564,9 @@ class SharedSSM(object):
                     batch_nll , _   = sess.run([self.filter_batch_nll_mean , self.train_op]
                                             , feed_dict=feed_dict)
                     # 将训练时的 output_mean 和 真实值进行比对 #(ssm_num ,bs , seq)
-                    batch_pred = sess.run(self.pred_mean, feed_dict=feed_dict)
-                    plot_train_pred(path=self.log_path, data=target_batch_input['past_target'], pred=batch_pred,
-                                    batch=batch_no, epoch=epoch_no, plot_num=4
+                    batch_pred = sess.run(self.train_z_mean, feed_dict=feed_dict)
+                    plot_train_pred(path=self.train_log_path, data=target_batch_input['past_target'], pred=batch_pred,
+                                    batch=batch_no, epoch=epoch_no, plot_num=3
                                     , time_start=target_batch_input['start'], freq=self.config.freq)
                     epoch_loss += np.sum(batch_nll)
                     avg_epoch_loss = epoch_loss/((batch_no+1)*self.config.batch_size)
@@ -596,16 +600,16 @@ class SharedSSM(object):
             )
             #如果当前 epoch 的结果比之前的要好，则立刻取代，保存
             if avg_epoch_loss < best_epoch_info['filter_nll']:
-                del_previous_model_params(self.log_path)
+                del_previous_model_params(self.train_log_path)
                 best_epoch_info['filter_nll'] = avg_epoch_loss
                 best_epoch_info['epoch_no'] = epoch_no
-                self.save_path = os.path.join(self.log_path, "model_params"
+                self.save_path = os.path.join(self.train_log_path, "model_params"
                                               ,'best_{}_epoch({})_nll({})'.format(self.config.target.replace(',' ,'_'),
                                                          epoch_no,
                                                          best_epoch_info['filter_nll'])
                                               )
                 self.saver.save(sess, self.save_path)
-        plot_train_epoch_loss(train_plot_points , self.log_path)
+        plot_train_epoch_loss(train_plot_points, self.train_log_path)
         logging.info(
             f"Loading parameters from best epoch "
             f"({best_epoch_info['epoch_no']})"
@@ -621,7 +625,7 @@ class SharedSSM(object):
 
     def predict(self):
         sess = self.sess
-        self.all_forecast_result = []
+
         # 如果是 训练之后接着的 predict 直接采用之前 train 产生的save_path
         if hasattr(self ,'save_path'):
             path = self.save_path
@@ -632,39 +636,56 @@ class SharedSSM(object):
                 print('something bad appears')
             finally:
                 print('whatever ! life is still fantastic !')
-        iteration = len(self.env_data) // self.batch_size + 1 \
-                    if len(self.env_data) % self.batch_size != 0 \
-                    else len(self.env_data) // self.batch_size
-        for batch_no in range(iteration):
-            test_input , other_info = next(self.test_iter)
-            placeholders = [self.feat_static_cat, self.past_observed_values
-                , self.past_seasonal_indicators, self.past_time_feat, self.past_target
-                , self.future_seasonal_indicators , self.future_time_feat]
-            feed_dict = dict(zip(placeholders, test_input))
 
-            test_output = sess.run(self.predict_result,feed_dict =  feed_dict)
-
-            outputs = [
-                np.concatenate(s)[:self.num_sample_paths]
-                for s in zip(test_output)
-            ]
-            print('当前正在处理第 %d 个 batch_no 的结果' % (batch_no))
-            for i , output in enumerate(outputs):
-                # 最后一个不满 batch_size 的放弃它
-
-                sample_forecast = SampleForecast(
-                    samples = output,
-                    start_date = other_info[0][i],
-                    freq = self.config.freq,
+        for ( target_batch ,  env_batch)in zip(
+                enumerate(self.target_test_loader, start=1),
+                enumerate(self.env_test_loader , start = 1)
+        ):
+            batch_no = target_batch[0]
+            print('当前做Inference的第{}个batch的内容'.format(batch_no))
+            target_batch_input = target_batch[1]
+            env_batch_input = env_batch[1]
+            if target_batch_input != None and env_batch_input != None:
+                # TODO:这里要注意，因为我的batch_size被固定了，所以，这里要添加一个对数量的补全
+                target_batch_input , bs = complete_batch(batch = target_batch_input , batch_size = self.config.batch_size)
+                env_batch_input , _ = complete_batch(batch=env_batch_input, batch_size=self.config.batch_size)
+                feed_dict = {
+                    self.placeholders['past_environment'] : env_batch_input['past_target'],
+                    self.placeholders['past_env_observed'] : env_batch_input['past_observed_values'],
+                    self.placeholders['env_past_time_feature'] : env_batch_input['past_time_feat'],
+                    self.placeholders['pred_environment']: env_batch_input['future_target'],
+                    self.placeholders['env_pred_time_feature'] : env_batch_input['future_time_feat'],
+                    self.placeholders['past_target'] : target_batch_input['past_target'],
+                    self.placeholders['past_target_observed'] : target_batch_input['past_observed_values'],
+                    self.placeholders['target_past_time_feature'] : target_batch_input['past_time_feat'],
+                    self.placeholders['target_pred_time_feature'] : target_batch_input['future_time_feat']
+                }
+                batch_train_z, z_scale = sess.run([self.train_z_mean[:,:bs], self.target_scale[:,:bs]], feed_dict=feed_dict)
+                batch_pred_z_mean, batch_pred_z_cov  = sess.run(
+                    [self.pred_z_mean_scaled[:,:bs] , self.pred_z_cov[:,:bs] ], feed_dict=feed_dict
                 )
-                # if batch_no < len(self.test_data) // self.batch_size :
-                #     self.all_forecast_result.append(sample_forecast)
-                if batch_no*self.batch_size + i < len(self.env_data):
-                    self.all_forecast_result.append(sample_forecast)
-                else:
-                    print('%d batch %d sample was complicate , throw away' %(batch_no,i))
-                    break
+                # print(z_scale.shape)
+                # print(batch_pred_z_mean.shape)
+                # print(batch_pred_z_cov.shape)
+                # exit()
 
+                ground_truth = np.concatenate(
+                    [target_batch_input['past_target'] , target_batch_input['future_target']]
+                    ,axis = 2
+                )[:,:bs]
+                # pred的结果应该没有scale回去，因为在后面需要这个结果 进行 sample ，暂时不恢复
+                mean_pred = np.concatenate(
+                    [batch_train_z , np.multiply(batch_pred_z_mean, np.expand_dims(z_scale , axis=2))]
+                    , axis=2
+                )
+                if hasattr(self , 'log_path'):
+                    pred_plot_path = self.train_log_path
+                else:
+                    pred_plot_path = os.path.join(self.config.logs_dir, self.config.reload_model)
+                plot_train_pred(path=pred_plot_path,data=ground_truth
+                                ,pred=mean_pred,epoch='__TEST__',batch=batch_no, plot_num=8,
+                                time_start=target_batch_input['start'],freq=self.config.freq
+                )
 
         return self
 

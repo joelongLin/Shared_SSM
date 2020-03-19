@@ -252,6 +252,8 @@ class TrainDataLoader_OnlyPast(DataLoader_NoMX):
                        batch_count += 1
                        # 这里面使用重定向 generator
                        if batch_count >= self.num_batches_per_epoch:
+                           #就是因为这个没有置0 ，才导致后面的训练样本不全面
+                           batch_count = 0
                            self._cur_iter = self.transform(
                                self._iterate_forever(self.dataset), is_train=False
                            )
