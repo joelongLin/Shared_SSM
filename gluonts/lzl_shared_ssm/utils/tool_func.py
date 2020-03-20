@@ -98,6 +98,20 @@ def weighted_average(
     else:
         return tf.math.reduce_mean(metrics, axis=axis)
 
+def sample_without_put_back(samples, size):
+    '''
+    :param samples: 需要进行采样的集合
+    :param size: 采样的大小
+    :return: 不放回的采样
+    '''
+
+    result = []
+    for i in range(size):
+        z = np.random.choice(samples, 1)[0]
+        result.append(z)
+        index = np.where(samples == z)
+        samples = np.delete(samples, index)
+    return result
 
 def plot_train_pred(path, data, pred, batch, epoch, plot_num, time_start, freq):
     '''
@@ -116,8 +130,7 @@ def plot_train_pred(path, data, pred, batch, epoch, plot_num, time_start, freq):
     pred = np.squeeze(pred ,-1)
     root_path = os.path.join(path , 'train_pred_pic')
     #当前采样
-    samples_no = np.random.choice(np.arange(data.shape[1]) , plot_num)
-    print('当前 batch size :' , data.shape[1])
+    samples_no = sample_without_put_back(np.arange(data.shape[1]) , plot_num)
     current_dir = os.path.join(root_path, 'epoch({})'.format(epoch))
     if not os.path.isdir(current_dir):
         os.makedirs(current_dir)
@@ -199,11 +212,8 @@ def complete_batch(batch,batch_size):
         batch_value = batch[attr]
         if isinstance(batch_value , list):
             batch_num = len(batch_value)
-            print('补全之前：', attr, '---->', batch_num)
             batch[attr] = batch_value + [batch_value[-1]]*(batch_size-batch_num)
-            print('补全之后：', attr, '---->', len(batch[attr]))
         elif isinstance(batch_value, np.ndarray):
-            print('补全之前：', attr, '---->', batch[attr].shape)
             #表示所有非四维的
             if len(batch_value.shape) != TARGET_DIM:
                 batch_num = batch_value.shape[0]
@@ -213,7 +223,6 @@ def complete_batch(batch,batch_size):
                 batch_num = batch_value.shape[1]
                 complete_shape = [batch_value.shape[0],batch_size - batch_num] + list(batch_value.shape[2:])
                 batch[attr] = np.concatenate([batch_value, np.zeros(shape=complete_shape)], axis=1)
-            print('补全之后：', attr, '---->', batch[attr].shape)
     return batch ,batch_num
 
 

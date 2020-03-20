@@ -3,7 +3,7 @@
 #source activate gluonts
 #frozen
 gpu='3'
-reload_model=''
+reload_model='freq(1D)_lags(0)_past(90)_pred(5)_u(10)_l(4)_K(3)_T(2-40)_E(2-50)_α(50)_epoch(50)_bs(32)_bn(13)_lr(0.001)_initKF(0.05)_initCov(10.0)_dropout(0.5)'
 target="btc,eth"
 environment='gold'
 logs_dir="logs/btc_eth(shared_ssm)"
@@ -13,7 +13,7 @@ past_length='90'
 prediction_length='5'
 batch_size='32'
 batch_num='13'
-epochs='2'
+epochs='50'
 for ((i=1;i<=1;i=i+1))#! repettion
 do
     for drop_prob in 0.5

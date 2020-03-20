@@ -23,7 +23,7 @@ from gluonts.transform.sampler import TestSplitSampler
 from gluonts.dataset.field_names import FieldName
 from .scaler import MeanScaler , NOPScaler
 from .filter import MultiKalmanFilter
-from ..utils import create_dataset_if_not_exist , complete_batch
+from ..utils import create_dataset_if_not_exist , complete_batch , make_nd_diag
 from .data_loader import TrainDataLoader_OnlyPast ,InferenceDataLoader_WithFuture, mergeIterOut , stackIterOut
 from ..utils import del_previous_model_params , plot_train_epoch_loss , plot_train_pred
 
@@ -223,21 +223,32 @@ class SharedSSM(object):
         z_0 = tf.tile(tf.expand_dims(z_0,0) ,multiples=(self.ssm_num,1))
 
         # p(l_1) , SSM 隐空间的的的初始状态, mu , Sigma 分别代表 隐状态的 均值和方差
-        mu = np.zeros((self.config.batch_size, self.config.dim_l), dtype=np.float32)
-        mu = np.tile(mu, reps=(self.ssm_num, 1, 1)) #(ssm_num , bs , dim_l)
-        mu = tf.get_variable('mu' , initializer=mu)
+        #mu = np.zeros((self.config.batch_size, self.config.dim_l), dtype=np.float32)
+        #mu = np.tile(mu, reps=(self.ssm_num, 1, 1)) #(ssm_num , bs , dim_l)
+        #mu = tf.get_variable('mu' , initializer=mu)
         # mu = tf.tile(tf.expand_dims(mu, 0), multiples=(self.ssm_num, 1, 1))
-        Sigma = np.tile(self.config.init_cov * np.eye(self.config.dim_l, dtype=np.float32), (self.config.batch_size, 1, 1))
-        Sigma = np.tile(Sigma, reps=(self.ssm_num, 1, 1, 1)) #(ssm_num , bs , dim_l , dim_l)
-        Sigma = tf.get_variable('Sigma' , initializer=Sigma)
+        #Sigma = np.tile(self.config.init_cov * np.eye(self.config.dim_l, dtype=np.float32), (self.config.batch_size, 1, 1))
+        #Sigma = np.tile(Sigma, reps=(self.ssm_num, 1, 1, 1)) #(ssm_num , bs , dim_l , dim_l)
+        #Sigma = tf.get_variable('Sigma' , initializer=Sigma)
         # Sigma = tf.tile(tf.expand_dims(Sigma, 0), multiples=(self.ssm_num, 1, 1, 1))
 
-        self.init_vars = dict(A=A, B=B, C=C, mu=mu, Sigma=Sigma, z_0=z_0)
+        self.init_vars = dict(A=A, B=B, C=C, z_0=z_0)
+        # self.init_vars['mu'] =mu
+        # self.init_vars['Sigma'] =Sigma
 
         if self.config.scaling:
             self.scaler = MeanScaler(keepdims=False)
         else:
             self.scaler = NOPScaler(keepdims=False)
+
+        with  tf.variable_scope('prior_exactor', initializer=tf.contrib.layers.xavier_initializer()):
+            self.prior_mean_model = tf.layers.Dense(units=self.config.dim_l,dtype=tf.float32 ,name='prior_mean')
+            self.prior_cov_diag_model = tf.layers.Dense(
+                units=self.config.dim_l,
+                dtype=tf.float32,
+                activation=tf.keras.activations.sigmoid,
+                name='prior_cov'
+            )
 
         # TODO: time_feature 是否要用两个不同的lstm ？
         with tf.variable_scope('time_feature_exactor', initializer=tf.contrib.layers.xavier_initializer() ) :
@@ -335,21 +346,19 @@ class SharedSSM(object):
 
         # 一定要注意 Tensor 和 Variable 千万不能随意当成相同的东西
         # 对 time_feature 进行处理
-        # TODO: 现在假设 transition的噪声又 environment的时间特征决定， emission的噪声由 target的时间特征决定
-        env_time_rnn_out, self.env_time_train_last_state = tf.nn.dynamic_rnn(
-            cell=self.time_feature_lstm,
-            inputs = self.placeholders['env_past_time_feature'],
-            initial_state=None,
-            dtype=tf.float32,
-        )  # (bs,seq_length ,hidden_dim) layes x ([bs,h_dim],[bs,h_dim])
+        # TODO: 现在假设 transition的噪声 emission的噪声都由 target的时间特征决定
         target_time_rnn_out, self.target_time_train_last_state = tf.nn.dynamic_rnn(
             cell=self.time_feature_lstm,
             inputs=self.placeholders['target_past_time_feature'],
             initial_state=None,
             dtype=tf.float32,
         )  # (bs,seq_length ,hidden_dim) layes x ([bs,h_dim],[bs,h_dim])
+        mu = self.prior_mean_model(target_time_rnn_out[:,0,:]) #(bs,dim_l)
+        mu = tf.tile(tf.expand_dims(mu,0) ,[self.ssm_num ,1,1]) #(ssm_num ,bs , dim_l)
+        Sigma = self.prior_cov_diag_model(target_time_rnn_out[:,0,:])
+        Sigma = tf.tile(tf.expand_dims(make_nd_diag(Sigma ,self.config.dim_l) ,0) ,[self.ssm_num ,1,1,1])
         eyes = tf.eye(self.config.dim_l)
-        train_Q = self.noise_transition_model(env_time_rnn_out) #(bs, seq , 1)
+        train_Q = self.noise_transition_model(target_time_rnn_out) #(bs, seq , 1)
         train_Q = tf.multiply(eyes , tf.expand_dims(train_Q , axis=-1))
         train_R = self.noise_emission_model(target_time_rnn_out) #(bs, seq , 1)
         train_R = tf.expand_dims(train_R , axis=-1)
@@ -388,8 +397,8 @@ class SharedSSM(object):
                                           u = train_u,
                                           # mask 这里面会多一维度 (bs,seq , ssm_num ,1)
                                           mask=self.placeholders['past_target_observed'],
-                                          mu=self.init_vars['mu'],
-                                          Sigma=self.init_vars['Sigma'],
+                                          mu=mu,
+                                          Sigma=Sigma,
                                           z_0=self.init_vars['z_0'],
                                           alpha_fn=self.alpha,
                                           state = alpha_lstm_init
@@ -420,16 +429,11 @@ class SharedSSM(object):
         self.train_op = optimizer.apply_gradients(capped_gvs)
 
         return self
+
     def build_predict_forward(self):
         # 对预测域的数据先进行标准化(注：仅使用训练域的 mean 进行 scale)
         env_norm = tf.math.divide(self.placeholders['pred_environment'] , tf.expand_dims(self.env_scale,1))
         #首先,先对time_feature进行利用
-        env_time_rnn_out, _ = tf.nn.dynamic_rnn(
-            cell=self.time_feature_lstm,
-            inputs=self.placeholders['env_pred_time_feature'],
-            initial_state=self.env_time_train_last_state,
-            dtype=tf.float32,
-        )  # (bs,pred ,hidden_dim)
         target_time_rnn_out, _ = tf.nn.dynamic_rnn(
             cell=self.time_feature_lstm,
             inputs=self.placeholders['target_pred_time_feature'],
@@ -437,7 +441,7 @@ class SharedSSM(object):
             dtype=tf.float32,
         )  # (bs,pred ,hidden_dim)
         eyes = tf.eye(self.config.dim_l)
-        pred_Q = self.noise_transition_model(env_time_rnn_out)  # (bs, pred , 1)
+        pred_Q = self.noise_transition_model(target_time_rnn_out)  # (bs, pred , 1)
         pred_Q = tf.multiply(eyes, tf.expand_dims(pred_Q, axis=-1))
         pred_R = self.noise_emission_model(target_time_rnn_out)  # (bs, pred , 1)
         pred_R = tf.expand_dims(pred_R, axis=-1)
@@ -678,7 +682,7 @@ class SharedSSM(object):
                     [batch_train_z , np.multiply(batch_pred_z_mean, np.expand_dims(z_scale , axis=2))]
                     , axis=2
                 )
-                if hasattr(self , 'log_path'):
+                if hasattr(self , 'train_log_path'):
                     pred_plot_path = self.train_log_path
                 else:
                     pred_plot_path = os.path.join(self.config.logs_dir, self.config.reload_model)
