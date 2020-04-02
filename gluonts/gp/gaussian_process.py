@@ -339,7 +339,7 @@ class GaussianProcess:
         axis: Optional[List] = None,
     ) -> None:
         """
-        This method plots the sampled GP distribution at the test points in solid colors, as well as the predictive
+        This method plots the sampled GP distribution at the prophet_compared points in solid colors, as well as the predictive
         mean as the dashed red line.  Plus and minus 2 predictive standard deviations are shown in the grey region.
         The training points are shown as the blue dots.
 

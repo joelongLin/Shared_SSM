@@ -12,7 +12,7 @@ reload_model='logs/btc_eth/Dec_27_18:00:05_2019'
 #model="Model3_MMD"
 #model_save_dir_prefix="5to10"
 #src_train_path="5/train.csv"
-#src_test_path="5/test.csv"
+#src_test_path="5/prophet_compared.csv"
 #tgt_train_path="Boiler_#03_170721.csv"
 #tgt_test_path="Boiler_#03_170721.csv"
 #2

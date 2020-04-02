@@ -144,7 +144,7 @@ def serve_command(
         "use. If this value is not defined, the command will try to read it"
         "from the hyperparameters dictionary under the 'forecaster_name' key. "
         "If the value denotes a Predictor, training will be skipped and the "
-        "command will only do an evaluation on the provided test dataset."
+        "command will only do an evaluation on the provided prophet_compared dataset."
     ),
 )
 def train_command(data_path: str, forecaster: Optional[str]) -> None:

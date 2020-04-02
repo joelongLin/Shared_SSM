@@ -448,7 +448,7 @@ def load_datasets(
     metadata: Path, train: Path, test: Optional[Path]
 ) -> TrainDatasets:
     """
-    Loads a dataset given metadata, train and test path.
+    Loads a dataset given metadata, train and prophet_compared path.
 
     Parameters
     ----------
@@ -457,12 +457,12 @@ def load_datasets(
     train
         Path to the training dataset files.
     test
-        Path to the test dataset files.
+        Path to the prophet_compared dataset files.
 
     Returns
     -------
     TrainDatasets
-        An object collecting metadata, training data, test data.
+        An object collecting metadata, training data, prophet_compared data.
     """
     meta = MetaData.parse_file(Path(metadata) / "metadata.json")
     train_ds = FileDataset(train, meta.freq)
@@ -505,8 +505,8 @@ def save_datasets(
             dump_line(f, serialize_data_entry(entry))
 
     if dataset.test is not None:
-        (path / "test").mkdir(parents=True)
-        with open(path / "test/data.json", "wb") as f:
+        (path / "prophet_compared").mkdir(parents=True)
+        with open(path / "prophet_compared/data.json", "wb") as f:
             for entry in dataset.test:
                 dump_line(f, serialize_data_entry(entry))
 

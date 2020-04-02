@@ -12,17 +12,17 @@
 # permissions and limitations under the License.
 
 """
-Train/test splitter
+Train/prophet_compared splitter
 ~~~~~~~~~~~~~~~~~~~
 
-This module defines strategies to split a whole dataset into train and test
+This module defines strategies to split a whole dataset into train and prophet_compared
 subsets.
 
 For uniform datasets, where all time-series start and end at the same point in
 time `OffsetSplitter` can be used::
 
     splitter = OffsetSplitter(prediction_length=24, split_offset=24)
-    train, test = splitter.split(whole_dataset)
+    train, prophet_compared = splitter.split(whole_dataset)
 
 For all other datasets, the more flexible `DateSplitter` can be used::
 
@@ -30,7 +30,7 @@ For all other datasets, the more flexible `DateSplitter` can be used::
         prediction_length=24,
         split_date=pd.Timestamp('2018-01-31', freq='D')
     )
-    train, test = splitter.split(whole_dataset)
+    train, prophet_compared = splitter.split(whole_dataset)
 
 The module also supports rolling splits::
 
@@ -38,7 +38,7 @@ The module also supports rolling splits::
         prediction_length=24,
         split_date=pd.Timestamp('2018-01-31', freq='D')
     )
-    train, test = splitter.rolling_split(whole_dataset, windows=7)
+    train, prophet_compared = splitter.rolling_split(whole_dataset, windows=7)
 """
 
 # Standard library imports
@@ -161,7 +161,7 @@ class AbstractBaseSplitter(ABC):
             The prediction length which is used to train themodel.
 
         max_history:
-            If given, all entries in the *test*-set have a max-length of
+            If given, all entries in the *prophet_compared*-set have a max-length of
             `max_history`. This can be sued to produce smaller file-sizes.
     """
 

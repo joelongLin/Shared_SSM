@@ -54,7 +54,7 @@ class AsNumpyArray(SimpleTransformation):
         value = data[self.field]
         if not isinstance(value, float):
             # this lines produces "ValueError: setting an array element with a
-            # sequence" on our test
+            # sequence" on our prophet_compared
             # value = np.asarray(value, dtype=np.float32)
             # see https://stackoverflow.com/questions/43863748/
             value = np.asarray(list(value), dtype=self.dtype)

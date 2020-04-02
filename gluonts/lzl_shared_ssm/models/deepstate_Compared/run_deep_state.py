@@ -11,12 +11,12 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 
 cl = tf.app.flags
 # reload_model =  'logs/btc_eth/Dec_25_17:27:07_2019'
-reload_model = ''
+reload_model = 'freq(1D)_past(90)_pred(5)_LSTM(2-40)_trend(False)_epoch(50)_bs(32)_bn(13)_lr(0.001)_dropout(0.1)'
 cl.DEFINE_string('reload_model' ,reload_model,'models to reload')
 cl.DEFINE_string('logs_dir','logs/btc_eth(deep_state)','file to print log')
 
 #train configuration
-cl.DEFINE_integer('epochs' , 30 , 'Number of epochs that the network will train (default: 1).')
+cl.DEFINE_integer('epochs' , 50 , 'Number of epochs that the network will train (default: 1).')
 cl.DEFINE_bool('shuffle' , False ,'whether to shuffle the train dataset')
 cl.DEFINE_integer('batch_size' ,  32 , 'Numbere of examples in each batch')
 cl.DEFINE_integer('num_batches_per_epoch' , 13 , 'Numbers of batches at each epoch')
@@ -32,6 +32,7 @@ cl.DEFINE_string('embedding_dimension' , '' , ' Dimension of the embeddings for 
 # dataset configuration
 cl.DEFINE_string('target' , 'btc,eth' , 'Name of the target dataset')
 cl.DEFINE_string('environment' , 'gold' , 'Name of the dataset ')
+cl.DEFINE_string('start' , '2018-08-02' ,'time start of the dataset')
 cl.DEFINE_integer('timestep' , 503 , 'length of the series') #这个序列的长度实际上也决定了样本数量的大小
 cl.DEFINE_string('slice' , 'overlap' , 'how to slice the dataset')
 cl.DEFINE_string('freq','1D','Frequency of the data to train on and predict')
@@ -58,24 +59,26 @@ def main(_):
         print('change os dir : ' , os.getcwd())
     config = cl.FLAGS
     print('reload models : ' , config.reload_model)
-    config = reload_config(config)
-    # for i in config:
-    #     try:
-    #         print(i , ':' , eval('config.{}'.format(i)))
-    #     except:
-    #         print('当前 ' , i ,' 属性获取有问题')
-    #         continue
-    # exit()
+
     configuration = tf.compat.v1.ConfigProto()
     configuration.gpu_options.allow_growth = True
     with tf.compat.v1.Session(config=configuration) as sess:
         dssm = DeepStateNetwork(config=config,sess=sess)\
             .build_module().build_train_forward().build_predict_forward().initialize_variables()
         dssm.train()
-        # dssm.predict()
-        # dssm.evaluate()
+        dssm.predict()
 
 
 
 if __name__ == '__main__':
    tf.app.run()
+
+
+
+# for i in config:
+#     try:
+#         print(i , ':' , eval('config.{}'.format(i)))
+#     except:
+#         print('当前 ' , i ,' 属性获取有问题')
+#         continue
+# exit()

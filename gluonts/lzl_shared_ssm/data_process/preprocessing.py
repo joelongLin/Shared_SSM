@@ -15,10 +15,10 @@ import collections
 parser = argparse.ArgumentParser(description="data")
 parser.add_argument('-st' ,'--start' , type=str , help='数据集开始的时间', default='2018-08-02')
 parser.add_argument('-d','--dataset', type=str, help='需要重新生成的数据的名称',default='eth')
-parser.add_argument('-t','--train_length', type=int, help='数据集训练长度', default=30)
-parser.add_argument('-p'  ,'--pred_length' , type = int , help = '需要预测的长度' , default=1)
-parser.add_argument('-s'  ,'--slice' , type = str , help = '需要预测的长度' , default='overlap')
-parser.add_argument('-n' , '--num_time_steps' , type=int  , help='时间步的数量' , default='500')
+parser.add_argument('-t','--train_length', type=int, help='数据集训练长度', default=498)
+parser.add_argument('-p'  ,'--pred_length' , type = int , help = '需要预测的长度' , default=5)
+parser.add_argument('-s'  ,'--slice' , type = str , help = '需要预测的长度' , default='')
+parser.add_argument('-n' , '--num_time_steps' , type=int  , help='时间步的数量' , default=503)
 parser.add_argument('-f' , '--freq' , type=str  , help='时间间隔' , default='1D')
 args = parser.parse_args()
 
@@ -163,12 +163,12 @@ def load_finance_from_csv(ds_info):
 
 def create_dataset(dataset_name):
     ds_info = datasets_info[dataset_name]
-    df_aim = load_finance_from_csv(ds_info)
+    df_aim = load_finance_from_csv(ds_info) #(seq , features)
     ds_metadata = {'prediction_length': ds_info.prediction_length,
                    'dim': ds_info.dim,
                    'freq':ds_info.freq,
     }
-    func = slice_func[datasets_info[dataset_name].slice]
+    func = slice_func.get(ds_info.slice)
     if func != None: #表示存在窗口切割函数
         window_size = ds_info.prediction_length + ds_info.train_length
         target_slice , target_start = func(df_aim, window_size)
@@ -183,7 +183,7 @@ def create_dataset(dataset_name):
         ds_metadata['start'] = [pd.Timestamp(datasets_info[dataset_name].start_date
                                              ,freq = datasets_info[dataset_name].freq)
                                 for _ in range(datasets_info[dataset_name].dim)]
-        return np.transpose(df_aim.values) , ds_metadata
+        return np.expand_dims(df_aim.values, 0) , ds_metadata
 
 
 
@@ -191,6 +191,7 @@ def create_dataset(dataset_name):
 def createGluontsDataset(data_name):
     ds_info = datasets_info[data_name]
     # 获取所有目标序列，元信息
+    #(samples_size , seq_len , 1)
     target_slice, ds_metadata = create_dataset(data_name)
     # print('feat_static_cat : ' , feat_static_cat , '  type:' ,type(feat_static_cat))
     train_ds = ListDataset([{FieldName.TARGET: target,
@@ -212,7 +213,7 @@ def createGluontsDataset(data_name):
 
     dataset = TrainDatasets(metadata=ds_metadata, train=train_ds, test=test_ds)
     with open('data_process/processed_data/{}_{}_{}_{}.pkl'.format(
-            '%s_start(%s)'%(data_name, ds_info.start_date), '%s_DsSeries_%d'%(ds_info.slice,dataset.metadata['sample_size']),
+            '%s_start(%s)_freq(%s)'%(data_name, ds_info.start_date,ds_info.freq), '%s_DsSeries_%d'%(ds_info.slice,dataset.metadata['sample_size']),
             'train_%d'%ds_info.train_length, 'pred_%d'%ds_info.prediction_length,
     ), 'wb') as fp:
         pickle.dump(dataset, fp)

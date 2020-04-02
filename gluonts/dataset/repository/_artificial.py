@@ -25,7 +25,7 @@ def generate_artificial_dataset(
     dataset_path: Path, dataset: ArtificialDataset
 ) -> None:
     dataset_path_train = dataset_path / "train"
-    dataset_path_test = dataset_path / "test"
+    dataset_path_test = dataset_path / "prophet_compared"
 
     dataset_path.mkdir(exist_ok=True)
     dataset_path_train.mkdir(exist_ok=False)
@@ -45,7 +45,7 @@ def generate_artificial_dataset(
     )
 
     generate_sf2(
-        filename=str(dataset_path_test / "test.json"),
+        filename=str(dataset_path_test / "prophet_compared.json"),
         time_series=list(map(serialize_data_entry, ds.test)),
         is_missing=False,
         num_missing=0,

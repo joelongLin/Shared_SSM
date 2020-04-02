@@ -29,8 +29,8 @@ class DataConfig(BaseModel):
     ContentType: Optional[str] = None
 
 
-# for now we only support train and test
-DATASET_NAMES = "train", "test"
+# for now we only support train and prophet_compared
+DATASET_NAMES = "train", "prophet_compared"
 
 
 class TrainEnv:
@@ -79,9 +79,9 @@ def _load_channels(
     Return:
     Dict of channel-names mapping to the corresponding path.
 
-    For DeepAR these are `train` and optionally `test`. For Forecast,
+    For DeepAR these are `train` and optionally `prophet_compared`. For Forecast,
     we also have a `metadata` channel, which just contains some information
-    about the dataset in `train` and `test`.
+    about the dataset in `train` and `prophet_compared`.
 
     When running in SageMaker, channels and are listed in
     `/opt/ml/config/inputdataconfig.json`. Thus, if this file is present,

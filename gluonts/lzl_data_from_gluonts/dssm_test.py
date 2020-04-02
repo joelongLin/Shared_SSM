@@ -61,7 +61,7 @@ with open(all_train_data_path, 'wb') as fp:
 
 
 # forecast_it, ts_it = make_evaluation_predictions(
-#     dataset=elec_ds.test,  # test dataset
+#     dataset=elec_ds.prophet_compared,  # prophet_compared dataset
 #     predictor=predictor,  # predictor
 #     num_eval_samples=100,  # number of sample paths we want for evaluation
 # )

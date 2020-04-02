@@ -8,3 +8,6 @@ gluonts/lzl_data_from_gluonts/*.py
 
 # logging Files #
 *.log
+
+# pickle Files #
+*.pkl

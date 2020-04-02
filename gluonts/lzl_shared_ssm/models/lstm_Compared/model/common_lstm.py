@@ -8,10 +8,9 @@ import os
 from tensorflow import Tensor
 from sklearn.metrics import accuracy_score
 from tqdm import tqdm
-import json
+import pandas as pd
 import matplotlib.pyplot as plt
 from gluonts.time_feature import time_features_from_frequency_str
-from gluonts.model.forecast import SampleForecast
 from gluonts.transform import (Chain ,
                                AddObservedValuesIndicator,
                                AddInitTimeFeature,
@@ -21,7 +20,11 @@ from gluonts.transform import (Chain ,
 from gluonts.transform.sampler import TestSplitSampler
 from gluonts.dataset.field_names import FieldName
 from .scaler import MeanScaler , NOPScaler
-from gluonts.lzl_shared_ssm.utils import del_previous_model_params, plot_train_epoch_loss ,plot_train_pred_NoSSMnum
+from gluonts.lzl_shared_ssm.utils import (del_previous_model_params,
+                                          plot_train_epoch_loss ,
+                                          plot_train_pred_NoSSMnum,
+                                          create_dataset_if_not_exist,
+                                          complete_batch)
 from gluonts.lzl_shared_ssm.models.data_loader import TrainDataLoader_OnlyPast ,InferenceDataLoader_WithFuture, mergeIterOut , stackIterOut
 
 INIT_TIME = 'init_time'
@@ -29,42 +32,38 @@ class Common_LSTM(object):
     def load_original_data(self):
         name_prefix = 'data_process/processed_data/{}_{}_{}_{}.pkl'
         # 导入 target 以及 environment 的数据
-        ds_names = ','.join([self.config.target,self.config.environment])
         if self.config.slice == 'overlap':
             series = self.config.timestep - self.config.past_length - self.config.pred_length + 1
             print('每个数据集的序列数量为 ,', series)
-        target_path = [name_prefix.format(
-            name, '%s_DsSeries_%d' % (self.config.slice, series),
-                           'train_%d' % self.config.past_length, 'pred_%d' % self.config.pred_length,
-        ) for name in self.config.target.split(',')]
+        elif self.config.slice == 'nolap':
+            series = self.config.timestep // (self.config.past_length + self.config.pred_length)
+            print('每个数据集的序列数量为 ,', series)
+        else:
+            series = 1
+            print('当前序列数量为',series ,',是单长序列的情形')
+        # 目标序列的数据路径
+        target_path = {name:name_prefix.format(
+            '%s_start(%s)_freq(%s)'%(name, self.config.start ,self.config.freq), '%s_DsSeries_%d' % (self.config.slice, series),
+            'train_%d' % self.config.past_length, 'pred_%d' % self.config.pred_length,
+        ) for name in self.config.target.split(',')}
+
+        create_dataset_if_not_exist(
+            paths=target_path,start=self.config.start ,past_length=self.config.past_length
+            , pred_length=self.config.pred_length,slice=self.config.slice
+            , timestep=self.config.timestep, freq=self.config.freq
+        )
 
 
-        for path in target_path:
-            # 循环 path 的时候 需要 得到当前 path 对应的 ds_name
-            for ds_name in ds_names.split(','):
-                if ds_name in path:
-                    break
-            if not os.path.exists(path) :
-                logging.info('there is no dataset [%s] , creating...'%ds_name)
-                os.system('python data_process/preprocessing.py -d={} -t={} -p={} -s={} -n={} -f={}'
-                          .format(ds_name
-                              , self.config.past_length
-                              , self.config.pred_length
-                              , self.config.slice
-                              , self.config.timestep
-                              , self.config.freq))
-            else:
-                logging.info(' dataset [%s] was found , good~~~' % ds_name)
         self.target_data = []
         # 由于 target 应该都是 dim = 1 只是确定有多少个 SSM 而已
-        for target in target_path:
+        for target_name in target_path:
+            target = target_path[target_name]
             with open(target, 'rb') as fp:
                 target_ds = pickle.load(fp)
                 assert target_ds.metadata['dim'] == 1 , 'target 序列的维度都应该为1'
                 self.target_data.append(target_ds)
 
         self.ssm_num = len(self.target_data)
-
         print('导入原始数据成功~~~')
 
     def transform_data(self):
@@ -125,12 +124,11 @@ class Common_LSTM(object):
         )) for i in range(len(self.target_data))]
 
         self.target_train_loader = stackIterOut(target_train_iters,
-                                                fields=[FieldName.OBSERVED_VALUES , FieldName.FEAT_TIME , FieldName.TARGET],
+                                                fields=[FieldName.OBSERVED_VALUES  , FieldName.TARGET],
                                                 dim=0,
                                                 include_future=False)
         self.target_test_loader = stackIterOut(target_test_iters,
-                                               fields=[FieldName.OBSERVED_VALUES, FieldName.FEAT_TIME,
-                                                        FieldName.TARGET],
+                                               fields=[FieldName.OBSERVED_VALUES, FieldName.TARGET],
                                                dim=0,
                                                include_future=True)
 
@@ -194,41 +192,37 @@ class Common_LSTM(object):
 
 
     def build_train_forward(self):
-        target_norm, target_scale = self.scaler.build_forward(data=self.past_target
+        self.target_norm, self.target_scale = self.scaler.build_forward(data=self.past_target
                                , observed_indicator=self.past_observed_values) #(bs,seq, 1) #(bs,1)  dim_z == 1
         #将在lstm的第一个时间步添加 0
         target_input = tf.concat(
-            [tf.zeros(shape=(target_norm.shape[0] , 1 ,target_norm.shape[-1]))
-            ,target_norm]
+            [tf.zeros(shape=(self.target_norm.shape[0] , 1 ,self.target_norm.shape[-1]))
+            ,self.target_norm[:,:-1]]
             , axis=1
-        )#(ssm_num ,bs, seq_len+1 , dim_z)
+        )#(bs, seq_len , dim_z)
 
         if self.config.use_time_feat:
-            time_input = tf.concat(
-                [tf.expand_dims(self.train_init_time, axis=1)
-                , self.past_time_feat]
-                , axis=1
-            )  # (ssm_num , bs, seq_len+1 , time_dim)
-            features = tf.concat([target_input, time_input], axis=2)  # (bs,seq_length , time_feat + dim_z)
+            features = tf.concat([target_input, self.past_time_feat], axis=2)  # (bs,seq_length , time_feat + dim_z)
         else:
             features = target_input
+
         # output 相当于使用 lstm 产生 SSM 的参数, 且只是一部分的参数
-        output, lstm_final_state = tf.nn.dynamic_rnn(
+        self.lstm_train_output, self.lstm_final_state = tf.nn.dynamic_rnn(
             cell=self.lstm,
             inputs=features,
             initial_state=None,
             dtype=tf.float32
-        )  # (bs,seq_length+1 ,hidden_dim)
+        )  # ( bs,seq_length ,hidden_dim)
 
         # 去掉最后一个时间步，这与 Shared_SSM中使用 p(l_t | l_(t-1))进行预测，实验设置上来说是一样的
-        lstm_pred = self.lstm_dense(output)[:,:-1,:] #(ssm_num , bs ,seq, dim_z )
-        lstm_pred = tf.math.multiply(lstm_pred , self.past_observed_values) #(bs, seq , dim_z)
-        self.lstm_pred = tf.math.multiply(lstm_pred , tf.expand_dims(target_scale , 1)) #( bs, seq, dim_z)
+        lstm_pred_norm = self.lstm_dense(self.lstm_train_output) #( bs ,seq, dim_z )
+        lstm_pred_norm = tf.math.multiply(lstm_pred_norm , self.past_observed_values) #(bs, seq , dim_z)
+        self.lstm_pred = tf.math.multiply(lstm_pred_norm , tf.expand_dims(self.target_scale , 1)) #( bs, seq, dim_z)
 
         if self.config.use_orig_compute_loss:
             loss = tf.squeeze(tf.math.square(self.past_target - self.lstm_pred),-1) #(bs, seq)
         else:
-            loss = tf.squeeze(tf.math.square(target_norm - lstm_pred) , -1)
+            loss = tf.squeeze(tf.math.square(self.target_norm - lstm_pred_norm) , -1)
         self.batch_loss = tf.math.reduce_mean(
             loss
             ,axis=-1
@@ -243,7 +237,41 @@ class Common_LSTM(object):
         return self
 
     def build_predict_forward(self):
+        if self.config.use_time_feat:
+            input_0 = tf.concat(
+                [self.future_time_feat[:,0] #(bs, time_dim)
+                    , self.target_norm[:, -1]]
+                , axis=1
+            )  # ( bs , time_dim+dim_z)
+        else:
+            input_0 = self.target_norm[:,-1]
 
+        # 第一个时间步的训练
+        pred_result = tf.TensorArray(size=self.config.pred_length,dtype=tf.float32)
+        i = 0;
+
+        def cond(i , curr, state ,result):
+            return tf.less(i , self.config.pred_length)
+
+        def body(i , curr ,state, result):
+            lstm_curr ,state = self.lstm(inputs=curr , state=state)
+            curr = self.lstm_dense(lstm_curr)
+            if self.config.use_time_feat:
+                curr = tf.concat(
+                    [self.future_time_feat[:,i]
+                        , curr]
+                    , axis=1
+                )  # (bs, seq_len+1 , time_dim)
+            result = result.write(i, curr)
+            return i+1 , curr, state, result
+
+        _ , _ ,_ , pred_result = tf.while_loop(cond, body,
+                          loop_vars=[i, input_0 , self.lstm_final_state , pred_result])
+        pred_result_norm = pred_result.stack() #(pred , bs , dim_z)
+        pred_result_norm = tf.transpose(pred_result_norm, perm=[1, 0, 2])
+        if self.config.use_time_feat:
+            pred_result_norm = tf.expand_dims(pred_result_norm[..., -1], axis=-1)
+        self.pred_result = tf.math.multiply(pred_result_norm , tf.expand_dims(self.target_scale , 1)) #( bs, seq, dim_z)
         return self
 
 
@@ -256,9 +284,9 @@ class Common_LSTM(object):
 
         # Initialize or reload variables
         if self.config.reload_model is not '':
-            print("Restoring models in %s" % self.config.reload_model)
-            params_path = os.path.join(self.config.reload_model , "model_params")
-            param_name = os.listdir(params_path)[0].split('.')[0]
+            params_path = os.path.join(self.config.logs_dir, self.config.reload_model, "model_params")
+            print("Restoring model in %s" % params_path)
+            param_name = os.path.splitext(os.listdir(params_path)[0])[0]
             params_path = os.path.join(params_path, param_name)
             self.saver.restore(self.sess, params_path)
         else:
@@ -271,7 +299,7 @@ class Common_LSTM(object):
         if self.config.reload_model != '':
             return
         sess = self.sess
-        self.log_path = os.path.join(self.config.logs_dir,
+        self.train_log_path = os.path.join(self.config.logs_dir,
                                    '_'.join([
                                             'freq(%s)' % (self.config.freq)
                                             ,'past(%d)'%(self.config.past_length)
@@ -286,9 +314,10 @@ class Common_LSTM(object):
                                             , 'lr(%s)' % (str(self.config.learning_rate))
                                             , 'dropout(%s)' % (str(self.config.dropout_rate))
                                      ])
-                                   )
-        if not os.path.isdir(self.log_path):
-            os.makedirs(self.log_path)
+                                           )
+        print('训练参数目录-->' , self.train_log_path)
+        if not os.path.isdir(self.train_log_path):
+            os.makedirs(self.train_log_path)
 
         num_batches = self.config.num_batches_per_epoch
         best_epoch_info = {
@@ -308,16 +337,20 @@ class Common_LSTM(object):
                     for i in range(self.ssm_num):
                         feed_dict = {
                             self.train_init_time : target_batch_input[INIT_TIME],
-                            self.past_time_feat: target_batch_input['past_time_feat'][i],
+                            self.past_time_feat: target_batch_input['past_time_feat'],
                             self.past_observed_values : target_batch_input['past_%s' % (FieldName.OBSERVED_VALUES)][i] ,
                             self.past_target : target_batch_input['past_target'][i]}
 
                         batch_output , _   = sess.run([self.batch_loss , self.train_op]
                                                 , feed_dict=feed_dict)
+                        # TRAIN 画图
                         batch_pred = sess.run(self.lstm_pred , feed_dict=feed_dict)
-                        plot_train_pred_NoSSMnum(path=self.log_path, data=target_batch_input['past_target'][i], pred=batch_pred,
-                                        batch=batch_no, epoch=epoch_no, ssm_no=i,plot_num=4
-                                        , time_start=target_batch_input['start'], freq=self.config.freq)
+                        plot_train_pred_NoSSMnum(path=self.train_log_path,targets_name=self.config.target
+                                                 , data=target_batch_input['past_target'][i], pred=batch_pred,
+                                                batch=batch_no, epoch=epoch_no, ssm_no=i,plot_num=1
+                                                 , plot_length=self.config.past_length, time_start=target_batch_input['start'],
+                                                 freq=self.config.freq)
+
                         epoch_loss += np.sum(batch_output)
                         avg_epoch_loss = epoch_loss/((batch_no+1)*self.config.batch_size*(i+1))
 
@@ -351,17 +384,17 @@ class Common_LSTM(object):
             )
 
             if avg_epoch_loss < best_epoch_info['MSE']:
-                del_previous_model_params(self.log_path)
+                del_previous_model_params(self.train_log_path)
                 best_epoch_info['MSE'] = avg_epoch_loss
                 best_epoch_info['epoch_no'] = epoch_no
-                self.save_path = os.path.join(self.log_path, "model_params"
-                                              ,'best_{}_epoch({})_nll({})'.format(self.config.target.replace(',' ,'_'),
+                self.train_save_path = os.path.join(self.train_log_path, "model_params"
+                                                    ,'best_{}_epoch({})_nll({})'.format(self.config.target.replace(',' ,'_'),
                                                          epoch_no,
                                                          best_epoch_info['MSE'])
-                                              )
-                self.saver.save(sess, self.save_path)
+                                                    )
+                self.saver.save(sess, self.train_save_path)
                 #'/{}_{}_best.ckpt'.format(self.dataset,epoch_no)
-        plot_train_epoch_loss(train_plot_points, self.log_path)
+        plot_train_epoch_loss(train_plot_points, self.train_log_path)
         logging.info(
             f"Loading parameters from best epoch "
             f"({best_epoch_info['epoch_no']})"
@@ -379,8 +412,8 @@ class Common_LSTM(object):
         sess = self.sess
         self.all_forecast_result = []
         # 如果是 训练之后接着的 predict 直接采用之前 train 产生的save_path
-        if hasattr(self ,'save_path'):
-            path = self.save_path
+        if hasattr(self ,'train_save_path'):
+            path = self.train_save_path
             try:
                 self.saver.restore(sess, save_path=path)
                 print('there is no problem in restoring models params')
@@ -388,87 +421,44 @@ class Common_LSTM(object):
                 print('something bad appears')
             finally:
                 print('whatever ! life is still fantastic !')
-        iteration = len(self.test_data)//self.batch_size+1 \
-                    if len(self.test_data)%self.batch_size!=0 \
-                    else len(self.test_data)//self.batch_size
-        for batch_no in range(iteration):
-            test_input , other_info = next(self.test_iter)
-            placeholders = [self.feat_static_cat, self.past_observed_values
-                , self.past_seasonal_indicators, self.past_time_feat, self.past_target
-                , self.future_seasonal_indicators , self.future_time_feat]
-            feed_dict = dict(zip(placeholders, test_input))
 
-            test_output = sess.run(self.predict_result,feed_dict =  feed_dict)
+        plot_result_root_path = 'evaluate/results'
+        model_result = [];
 
-            outputs = [
-                np.concatenate(s)[:self.num_sample_paths]
-                for s in zip(test_output)
-            ]
-            print('当前正在处理第 %d 个 batch_no 的结果' % (batch_no))
-            for i , output in enumerate(outputs):
-                # 最后一个不满 batch_size 的放弃它
+        if not os.path.exists(plot_result_root_path):
+            os.makedirs(plot_result_root_path)
+        model_result_path = os.path.join(plot_result_root_path, '{}.pkl'.format(
+            'common_lstm(%s)_' % (self.config.target)
+            + (self.train_log_path.split('/')[-1] if hasattr(self, 'train_log_path') else self.config.reload_model)
+        ))
 
-                sample_forecast = SampleForecast(
-                    samples = output,
-                    start_date = other_info[0][i],
-                    freq = self.config.freq,
-                )
-                # if batch_no < len(self.test_data) // self.batch_size :
-                #     self.all_forecast_result.append(sample_forecast)
-                if batch_no*self.batch_size + i < len(self.test_data):
-                    self.all_forecast_result.append(sample_forecast)
-                else:
-                    print('%d batch %d sample was complete , throw away' %(batch_no,i))
-                    break
 
+        # 不沉迷画图，把预测结果保存到pickle对象里面
+        for batch_no , target_batch in enumerate(self.target_test_loader):
+            print('当前做Inference的第{}个batch的内容'.format(batch_no))
+            if target_batch != None :
+                batch_concat = []
+                for i in range(self.ssm_num):
+                    # TODO:这里要注意，因为我的batch_size被固定了，所以，这里要添加一个对数量的补全
+                    target_batch_complete, bs = complete_batch(batch=target_batch, batch_size=self.config.batch_size)
+                    feed_dict = {
+                        self.train_init_time: target_batch_complete[INIT_TIME],
+                        self.past_time_feat: target_batch_complete['past_time_feat'],
+                        self.past_observed_values: target_batch_complete['past_%s' % (FieldName.OBSERVED_VALUES)][i],
+                        self.past_target: target_batch_complete['past_target'][i],
+                        self.future_time_feat : target_batch_complete['future_time_feat']
+                    }
+
+                    # 这个部分只是为了方便画图，所以才把训练时候的结果也运行出来
+                    batch_pred = sess.run(
+                        self.pred_result, feed_dict=feed_dict
+                    )[:bs]
+                    batch_concat.append(np.expand_dims(batch_pred,axis=0))
+                batch_concat = np.concatenate(batch_concat, axis=0) #(ssm_num , bs , seq ,1)
+                model_result.append(batch_concat)
+        model_result = np.concatenate(model_result ,axis=1) #(ssm_num ,bs, seq ,1)
+
+        with open(model_result_path, 'wb') as fp:
+            pickle.dump(model_result, fp)
 
         return self
-
-
-    def evaluate(self, forecast=None):
-        ground_truth_loader = GroundTruthLoader(config=self.config)
-        ground_truth = ground_truth_loader.get_ground_truth()
-        if forecast is None:
-            forecast = self.all_forecast_result
-        finance_eval = evaluate_up_down(ground_truth ,forecast)
-        if hasattr(self , 'writer_path'):
-            eval_path = os.path.join(self.log_path, "metrics.json")
-        else:
-            eval_path = os.path.join(self.config.reload_model , "metrics.json")
-        with open(eval_path, 'w') as f:
-            json.dump(finance_eval, f, indent=4)
-        # plot_length = self.config.past_length + self.config.pred_length
-        # for i in range(321):#对于electricity来说，总共由321列
-        #     plot_prob_forecasts(ground_truth[i] , forecast[i] ,self.config.dataset,i,plot_length)
-        #
-        # exit()
-        # evaluator = Evaluator(quantiles=[0.1, 0.5, 0.9])
-        # agg_metrics, item_metrics = evaluator(iter(ground_truth)
-        #                                       , iter(forecast)
-        #                                       , num_series=len(ground_truth_loader.ds.test))
-        #
-        # print(json.dumps(agg_metrics, indent=4))
-        pass
-
-
-def plot_prob_forecasts(ts_entry, forecast_entry,ds_name ,no ,plot_length):
-    prediction_intervals = (50.0, 90.0)
-    legend = ["observations", "median prediction"] + [f"{k}% prediction interval" for k in prediction_intervals][::-1]
-
-    fig, ax = plt.subplots(1, 1, figsize=(10, 7))
-    ts_entry[-plot_length:].plot(ax=ax)  # plot the time series
-    forecast_entry.plot(prediction_intervals=prediction_intervals, color='g')
-    plt.grid(which="both")
-    plt.legend(legend, loc="upper left")
-    plt.savefig('pic/{}_result/result_output_tf_{}.png'.format(ds_name,no))
-    plt.close(fig)
-
-
-
-def evaluate_up_down(ground_truth , mc_forecast):
-    # 0代表跌 1代表涨
-    ground_truth_labels = [1 if truth.iloc[-1].values[0] > truth.iloc[-2].values[0] else 0 for truth in ground_truth]
-    forecast_labels = [1 if mc_forecast[i].mean[0] > ground_truth[i].iloc[-2].values[0] else 0
-                       for i in range(len(mc_forecast))]
-    acc = accuracy_score(ground_truth_labels , forecast_labels)
-    return {'acc' : acc}

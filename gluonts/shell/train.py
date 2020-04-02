@@ -62,8 +62,8 @@ def run_train_and_test(
 
     predictor.serialize(env.path.model)
 
-    if "test" in env.datasets:
-        run_test(env, predictor, env.datasets["test"])
+    if "prophet_compared" in env.datasets:
+        run_test(env, predictor, env.datasets["prophet_compared"])
 
 
 def run_train(forecaster: Estimator, train_dataset: Dataset) -> Predictor:
@@ -90,7 +90,7 @@ def run_test(
 
     if len_original > len_filtered:
         logger.warning(
-            f"Not all time-series in the test-channel have "
+            f"Not all time-series in the prophet_compared-channel have "
             f"enough data to be used for evaluation. Proceeding with "
             f"{len_filtered}/{len_original} "
             f"(~{int(len_filtered / len_original * 100)}%) items."

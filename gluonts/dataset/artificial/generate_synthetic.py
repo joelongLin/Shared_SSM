@@ -79,7 +79,7 @@ def write_csv_row(
 def generate_sf2(
     filename: str, time_series: List, is_missing: bool, num_missing: int
 ) -> None:
-    #  This function generates the test and train json files which will be converted to csv format
+    #  This function generates the prophet_compared and train json files which will be converted to csv format
     if not os.path.exists(os.path.dirname(filename)):
         os.makedirs(os.path.dirname(filename))
     with open(filename, "w") as json_file:
@@ -126,7 +126,7 @@ def generate_sf2s_and_csv(
     train_set = artificial_dataset.train
     generate_sf2(file_path + "train.json", train_set, is_missing, num_missing)
     test_set = artificial_dataset.test
-    generate_sf2(file_path + "test.json", test_set, is_missing, num_missing)
+    generate_sf2(file_path + "prophet_compared.json", test_set, is_missing, num_missing)
     with open(file_path + "input_to_forecast.csv", "w") as csv_file:
         # Test set has training set with the additional values to predict
         write_csv_row(test_set, freq, csv_file, is_missing, num_missing)

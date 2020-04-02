@@ -70,7 +70,7 @@ class ProphetDataEntry(NamedTuple):
                         periods=self.train_length,
                         freq=self.start.freq,
                     ),
-                    "y": self.target,
+                    "y": self.target if len(self.target.shape)==1 else np.squeeze(self.target),
                 },
                 **{
                     feat_name(i): feature[: self.train_length]
@@ -148,7 +148,7 @@ class ProphetPredictor(RepresentablePredictor):
             forecast_samples = self._run_prophet(data, params)
 
             yield SampleForecast(
-                samples=forecast_samples,
+                samples=forecast_samples, #(samples , T)
                 start_date=data.forecast_start,
                 freq=self.freq,
             )

@@ -200,13 +200,13 @@ def temporary_train_env(
 
         path_metadata = paths.data / "metadata" / "metadata.json"
         path_train = paths.data / "train"
-        path_test = paths.data / "test"
+        path_test = paths.data / "prophet_compared"
 
         path_metadata.parent.mkdir(exist_ok=True)
 
         path_metadata.symlink_to(ds_path / "metadata.json")
         path_train.symlink_to(ds_path / "train", target_is_directory=True)
-        path_test.symlink_to(ds_path / "test", target_is_directory=True)
+        path_test.symlink_to(ds_path / "prophet_compared", target_is_directory=True)
 
         yield TrainEnv(path=paths.base)
 

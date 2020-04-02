@@ -102,7 +102,7 @@ class MapTransformation(Transformation):
 
 class SimpleTransformation(MapTransformation):
     """
-    Element wise transformations that are the same in train and test mode
+    Element wise transformations that are the same in train and prophet_compared mode
     """
 
     def map_transform(self, data: DataEntry, is_train: bool) -> DataEntry:

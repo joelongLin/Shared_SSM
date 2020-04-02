@@ -95,7 +95,7 @@ class MultiKalmanFilter(object):
         K = tf.multiply(tf.expand_dims(mask, -1), K) #(ssm_num , bs, dim_l , dim_z)
 
         # Get current mu and Sigma
-        mu_t = mu_pred + tf.squeeze(tf.matmul(K, tf.expand_dims(r, -1)))  # (ssm_num , bs, dim_l)
+        mu_t = mu_pred + tf.squeeze(tf.matmul(K, tf.expand_dims(r, -1)),axis=-1)  # (ssm_num , bs, dim_l)
         I_KC = self._I - tf.matmul(K, C)  # (ssm_num , bs, dim_l, dim_l)
         # TODO: 这里的 Sigma_t 的计算方式不太一样
         Sigma_t = tf.matmul(tf.matmul(I_KC, Sigma_pred), I_KC, transpose_b=True) + self._sast(R, K)  # (ssm_num , bs, dim_l, dim_l)

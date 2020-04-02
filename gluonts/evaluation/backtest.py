@@ -90,7 +90,7 @@ def make_evaluation_predictions(
 
     # TODO filter out time series with target shorter than prediction length
     # TODO or fix the evaluator so it supports missing values instead (all
-    # TODO the test set may be gone otherwise with such a filtering)
+    # TODO the prophet_compared set may be gone otherwise with such a filtering)
 
     dataset_trunc = TransformedDataset(
         dataset, transformations=[transform.AdhocTransform(truncate_target)]

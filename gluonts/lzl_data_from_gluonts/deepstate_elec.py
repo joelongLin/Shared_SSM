@@ -57,7 +57,7 @@ print(predictor_deserialized.input_names)
 # predictor_deserialized.batch_size = 1
 
 forecast_it, ts_it = make_evaluation_predictions(
-    dataset=elec_ds.test,  # test dataset
+    dataset=elec_ds.test,  # prophet_compared dataset
     predictor=predictor_deserialized,  # predictor
     num_eval_samples=100,  # number of sample paths we want for evaluation
 )

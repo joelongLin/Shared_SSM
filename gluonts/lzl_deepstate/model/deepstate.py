@@ -538,7 +538,7 @@ class DeepStateNetwork(object):
         # evaluator = Evaluator(quantiles=[0.1, 0.5, 0.9])
         # agg_metrics, item_metrics = evaluator(iter(ground_truth)
         #                                       , iter(forecast)
-        #                                       , num_series=len(ground_truth_loader.ds.test))
+        #                                       , num_series=len(ground_truth_loader.ds.prophet_compared))
         #
         # print(json.dumps(agg_metrics, indent=4))
         pass
@@ -549,7 +549,7 @@ def plot_prob_forecasts(ts_entry, forecast_entry,ds_name ,no ,plot_length):
     legend = ["observations", "median prediction"] + [f"{k}% prediction interval" for k in prediction_intervals][::-1]
 
     fig, ax = plt.subplots(1, 1, figsize=(10, 7))
-    ts_entry[-plot_length:].plot(ax=ax)  # plot the time series
+    ts_entry[-plot_length:].plot(ax=ax)  # evaluate the time series
     forecast_entry.plot(prediction_intervals=prediction_intervals, color='g')
     plt.grid(which="both")
     plt.legend(legend, loc="upper left")

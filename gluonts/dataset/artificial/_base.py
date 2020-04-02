@@ -103,7 +103,7 @@ class ConstantDataset(ArtificialDataset):
         is_nan: bool = False,  # Generates constant dataset of 0s with explicit NaN missing values
         is_random_constant: bool = False,  # Inserts random constant value for each time series
         is_different_scales: bool = False,  # Generates constants on various scales
-        is_piecewise: bool = False,  # Determines whether the time series in the test
+        is_piecewise: bool = False,  # Determines whether the time series in the prophet_compared
         # and train set should have different constant values
         is_noise: bool = False,  # Determines whether to add Gaussian noise to the constant dataset
         is_long: bool = False,  # Determines whether some time series will have very long lengths
@@ -390,7 +390,7 @@ class ComplexSeasonalTimeSeries(ArtificialDataset):
     ) -> None:
         """
         :param num_series: number of time series generated in the train and
-               test set
+               prophet_compared set
         :param prediction_length:
         :param freq_str:
         :param length_low: minimum length of a time-series, must be larger than
@@ -529,12 +529,12 @@ class ComplexSeasonalTimeSeries(ArtificialDataset):
     def make_timeseries(self, seed: int = 1) -> List[DataEntry]:
         res = []
         # Fix seed so that the training set is the same
-        # as the test set from 0:self.prediction_length for the two independent calls
+        # as the prophet_compared set from 0:self.prediction_length for the two independent calls
 
         def sigmoid(x: np.ndarray) -> np.ndarray:
             return 1.0 / (1.0 + np.exp(-x))
 
-        # Ensure same start dates in test and training set
+        # Ensure same start dates in prophet_compared and training set
         my_random = random.Random(seed)
         state = np.random.RandomState(seed)
         for i in range(self.num_series):
