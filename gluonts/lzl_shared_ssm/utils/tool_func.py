@@ -80,6 +80,44 @@ def create_dataset_if_not_exist(paths, start, past_length , pred_length , slice 
         else:
             logging.info(' dataset [%s] was found , good~~~' % name)
 
+def add_time_mark_to_file(path):
+    '''
+    给重复的文件名添加 time 字段
+    :param path: 路径
+    :return: 返回新的路径名
+    '''
+    count = 1
+    if not os.path.exists(path):
+        return path
+    file_name_list = os.path.splitext(os.path.basename(path))
+    father = os.path.split(path)[0]
+
+    new_path = os.path.join(father ,file_name_list[0]+'_%d'%(count)+file_name_list[1])
+    while os.path.exists(new_path):
+        count += 1
+        new_path = os.path.join(father, file_name_list[0] + '_%d'%(count) + file_name_list[1])
+
+    return new_path
+
+def add_time_mark_to_dir(path):
+    '''
+    给已经存在的文件夹添加 time 字段
+    :param path: 路径
+    :return: 新的文件夹路径
+    '''
+    if not os.path.exists(path):
+        return path
+    count = 1;
+    father = os.path.split(path)[0]
+    dir_name = os.path.split(path)[-1]
+
+    new_path = os.path.join(father ,dir_name+'_%d'%(count))
+    while os.path.exists(new_path):
+        count += 1
+        new_path = os.path.join(father ,dir_name+'_%d'%(count))
+
+    return new_path
+
 def weighted_average(
    metrics, weights = None, axis=None
 ):
@@ -88,7 +126,6 @@ def weighted_average(
     metrics  #(ssm_num , bs,seq_length )
     weights  #(ssm_num , bs , seq_length)
     axis   metrics中需要加权的
-
     """
 
     if weights is not None:
@@ -207,7 +244,8 @@ def plot_train_pred_NoSSMnum(path, targets_name, data, pred, batch, epoch, ssm_n
 
 def plot_train_epoch_loss(
         result:dict,
-        path: str
+        path: str,
+        time: str
 ):
     epoches = list(result.keys())
     loss = list(result.values())
@@ -230,7 +268,7 @@ def plot_train_epoch_loss(
     ax.set_title('epoch information when training' ,title_font )
     ax.xaxis.set_tick_params(labelsize=21)
     ax.yaxis.set_tick_params(labelsize=21)
-    plt.savefig(os.path.join(path , 'train.png'))
+    plt.savefig(os.path.join(path , 'train_%s.png'%(time)))
     plt.close(fig)
 
 def complete_batch(batch,batch_size):
@@ -262,15 +300,27 @@ def del_previous_model_params(path):
     :param path:  该组参数组的主目录
     :return:  删除之前epoch的参数文件
     '''
-    path = os.path.join(path,'model_params')
     if not os.path.isdir(path):
         return
-    for files in os.listdir(path):
-        if files.endswith(".data-00000-of-00001") \
-                or files.endswith(".index") \
-                or files.endswith(".meta"):
-            os.remove(os.path.join(path,files))
+    for file in os.listdir(path):
+        if file.endswith(".data-00000-of-00001") \
+                or file.endswith(".index") \
+                or file.endswith(".meta"):
+            os.remove(os.path.join(path,file))
 
+def get_model_params_name(path):
+    '''
+    :param path: 改组参数组的目录 ..../model_params
+    :return: 参数文件名
+    '''
+    if not os.path.isdir(path):
+        return
+    for file in os.listdir(path):
+        if file.endswith(".data-00000-of-00001") \
+                or file.endswith(".index") \
+                or file.endswith(".meta"):
+            params_name = os.path.splitext(file)[0]
+            return params_name
 
 # 画原有序列
 def plot_original(train_entry , test_entry , no):
@@ -289,3 +339,76 @@ def plot_original(train_entry , test_entry , no):
     ax[1].legend(["prophet_compared series", "end of train series"], loc="upper left")
 
     plt.savefig('pic/original_entry_{}.png'.format(no))
+
+# 给定序列的均值和方差，进行采样：
+def samples_with_mean_cov(mean: np.ndarray , cov:np.ndarray , num_samples: int):
+    '''
+    :param mean: (ssm_num, bs, pred, dim_z)
+    :param cov: (ssm_num, bs, pred, dim_z ， dim_z)
+    :return: samples (ssm_num ,bs,num_samples, pred, dim_z)
+    '''
+    result = np.zeros(shape=mean.shape)
+    result =  np.tile(np.expand_dims(result,0),[100]+[1]*len(result.shape))#(samples, ssm ,bs, pred, dim_z)
+
+    for i in range(mean.shape[0]):
+        for j in range(mean.shape[1]):
+            for k in range(mean.shape[2]):
+                samples = np.random.multivariate_normal(mean[i,j,k] , cov[i,j,k] , size=num_samples)
+                result[: , i, j , k] = samples
+                # print(samples.shape)
+    result = np.transpose(result ,[1,2,0,3,4])
+    return result
+    pass
+
+'''
+根据要 reload 的path 修改 config的值
+'''
+def get_reload_hyper(path, config):
+       
+    abbre = {
+        'freq' : 'freq',
+        'env' : 'environment',
+        'lags' : 'maxlags',
+        'past' : 'past_length',
+        'pred' : 'pred_length',
+        'u' : 'dim_u',
+        'l' : 'dim_l',
+        'K' : 'K',
+        'T' : ['time_exact_layers' , 'time_exact_cells'],
+        'E' : ['env_exact_layers' , 'env_exact_cells'],
+        'α' : 'alpha_units',
+        'epoch' : 'epochs',
+        'bs' : 'batch_size',
+        'bn' : 'num_batches_per_epoch',
+        'lr' : 'learning_rate' ,
+        'initKF' : 'init_kf_matrices',
+        'dropout':'dropout_rate'
+    }
+
+    not_convert_to_int = ['freq' ,'env' , 'T' , 'E']
+    convert_to_float = ['lr' , 'initKF' , 'dropout']
+    hyper_parameters = path.split('_');
+    for parameter in hyper_parameters:
+        index_of_left_embrace = parameter.index('(')
+        index_of_right_embrace = parameter.index(')')
+        name = parameter[:index_of_left_embrace]
+        value = parameter[index_of_left_embrace+1 : index_of_right_embrace]
+        if name in convert_to_float :
+            value = float(value)
+        elif name not in not_convert_to_int:
+            value = int(value)
+        else:
+            #维持原样就好了
+            pass
+        
+        #单参数
+        if isinstance(abbre[name] , str):
+            config.__setattr__(abbre[name] , value)
+        #多参数，形容LSTM
+        else:
+            value_split = value.split('-')
+            for i in range(len(abbre[name])):
+                config.__setattr__(abbre[name][i] , int(value_split[i]))
+    
+    return config
+        

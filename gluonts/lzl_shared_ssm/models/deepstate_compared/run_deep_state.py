@@ -1,9 +1,7 @@
 # -*- utf-8 -*-
 # author : joelonglin
 
-from gluonts.lzl_shared_ssm.models.deepstate_Compared.model import DeepStateNetwork
-import pickle
-from gluonts.lzl_shared_ssm.models.deepstate_Compared.utils import reload_config
+import sys
 import tensorflow as tf
 tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 import os
@@ -11,12 +9,13 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 
 cl = tf.app.flags
 # reload_model =  'logs/btc_eth/Dec_25_17:27:07_2019'
-reload_model = 'freq(1D)_past(90)_pred(5)_LSTM(2-40)_trend(False)_epoch(50)_bs(32)_bn(13)_lr(0.001)_dropout(0.1)'
+reload_model = ''
 cl.DEFINE_string('reload_model' ,reload_model,'models to reload')
+cl.DEFINE_string('reload_time' , '' , 'time marker of the reload model')
 cl.DEFINE_string('logs_dir','logs/btc_eth(deep_state)','file to print log')
 
 #train configuration
-cl.DEFINE_integer('epochs' , 50 , 'Number of epochs that the network will train (default: 1).')
+cl.DEFINE_integer('epochs' , 100 , 'Number of epochs that the network will train (default: 1).')
 cl.DEFINE_bool('shuffle' , False ,'whether to shuffle the train dataset')
 cl.DEFINE_integer('batch_size' ,  32 , 'Numbere of examples in each batch')
 cl.DEFINE_integer('num_batches_per_epoch' , 13 , 'Numbers of batches at each epoch')
@@ -26,7 +25,7 @@ cl.DEFINE_float('learning_rate' , 0.001 , 'Initial learning rate')
 cl.DEFINE_integer('num_layers' ,2,'num of lstm cell layers')
 cl.DEFINE_integer('num_cells' ,40 , 'hidden units size of lstm cell')
 cl.DEFINE_string('cell_type' , 'lstm' , 'Type of recurrent cells to use (available: "lstm" or "gru"')
-cl.DEFINE_float('dropout_rate' , 0.1 , 'Dropout regularization parameter (default: 0.1)')
+cl.DEFINE_float('dropout_rate' , 0.5 , 'Dropout regularization parameter (default: 0.1)')
 cl.DEFINE_string('embedding_dimension' , '' , ' Dimension of the embeddings for categorical features')
 
 # dataset configuration
@@ -44,7 +43,7 @@ cl.DEFINE_bool('add_trend' , False , 'Flag to indicate whether to include trend 
 cl.DEFINE_integer('num_eval_samples', '100', 'Number of samples paths to draw when computing predictions')
 cl.DEFINE_bool('scaling', True, 'whether to scale the target and observed')
 cl.DEFINE_bool('use_feat_dynamic_real', False, 'Whether to use the ``feat_dynamic_real`` field from the data')
-cl.DEFINE_bool('use_feat_static_cat', False, 'Whether to use the ``feat_static_cat`` field from the data')
+cl.DEFINE_bool('use_feat_static_cat', True, 'Whether to use the ``feat_static_cat`` field from the data')
 cl.DEFINE_string('cardinality' , '2' , 'Number of values of each categorical feature.')
 
 
@@ -52,14 +51,12 @@ cl.DEFINE_string('cardinality' , '2' , 'Number of values of each categorical fea
 
 def main(_):
     if ('/lzl_shared_ssm' not in os.getcwd()):
-         os.chdir('gluonts/lzl_shared_ssm')
-         print('change os dir : ',os.getcwd())
-    if('deepstate_Compared' in os.getcwd()):
-        os.chdir('../..')
-        print('change os dir : ' , os.getcwd())
+        os.chdir('gluonts/lzl_shared_ssm')
+        sys.path.insert(0, '../..')
+        print('change os dir : ', os.getcwd())
     config = cl.FLAGS
     print('reload models : ' , config.reload_model)
-
+    from gluonts.lzl_shared_ssm.models.deepstate_compared.model import DeepStateNetwork
     configuration = tf.compat.v1.ConfigProto()
     configuration.gpu_options.allow_growth = True
     with tf.compat.v1.Session(config=configuration) as sess:

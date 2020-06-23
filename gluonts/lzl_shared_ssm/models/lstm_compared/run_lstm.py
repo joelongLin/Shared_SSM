@@ -1,20 +1,22 @@
 # -*- utf-8 -*-
 # author : joelonglin
 
-from gluonts.lzl_shared_ssm.models.lstm_Compared.model import Common_LSTM
+
 import tensorflow as tf
 tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 import os
 os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+import sys
 
 cl = tf.app.flags
 # reload_model =  'logs/btc_eth/Dec_25_17:27:07_2019'
 reload_model = ''
 cl.DEFINE_string('reload_model' ,reload_model,'models to reload')
+cl.DEFINE_string('reload_time' , '' , 'time marker of the reload model')
 cl.DEFINE_string('logs_dir','logs/btc_eth(common_lstm)','file to print log')
 
 #train configuration
-cl.DEFINE_integer('epochs' , 60 , 'Number of epochs that the network will train (default: 1).')
+cl.DEFINE_integer('epochs' , 100 , 'Number of epochs that the network will train (default: 1).')
 cl.DEFINE_bool('shuffle' , False ,'whether to shuffle the train dataset')
 cl.DEFINE_integer('batch_size' ,  32 , 'Numbere of examples in each batch')
 cl.DEFINE_integer('num_batches_per_epoch' , 13 , 'Numbers of batches at each epoch')
@@ -27,7 +29,7 @@ cl.DEFINE_bool('use_orig_compute_loss' , True , 'compute the loss function with 
 cl.DEFINE_integer('num_layers' ,2,'num of lstm cell layers')
 cl.DEFINE_integer('num_cells' ,40 , 'hidden units size of lstm cell')
 cl.DEFINE_string('cell_type' , 'lstm' , 'Type of recurrent cells to use (available: "lstm" or "gru"')
-cl.DEFINE_float('dropout_rate' , 0.1 , 'Dropout regularization parameter (default: 0.1)')
+cl.DEFINE_float('dropout_rate' , 0.5 , 'Dropout regularization parameter (default: 0.1)')
 
 # dataset configuration
 cl.DEFINE_string('target' , 'btc,eth' , 'Name of the target dataset')
@@ -44,10 +46,8 @@ cl.DEFINE_integer('pred_length' , 5 , 'Length of the prediction horizon')
 def main(_):
     if ('/lzl_shared_ssm' not in os.getcwd()):
          os.chdir('gluonts/lzl_shared_ssm')
+         sys.path.insert(0,'../..')
          print('change os dir : ',os.getcwd())
-    if('lstm_Compared' in os.getcwd()):
-        os.chdir('../..')
-        print('change os dir : ' , os.getcwd())
     config = cl.FLAGS
     print('reload models : ' , config.reload_model)
     # for i in config:
@@ -57,6 +57,7 @@ def main(_):
     #         print('当前 ' , i ,' 属性获取有问题')
     #         continue
     # exit()
+    from gluonts.lzl_shared_ssm.models.lstm_compared.model import Common_LSTM
     configuration = tf.compat.v1.ConfigProto()
     configuration.gpu_options.allow_growth = True
     with tf.compat.v1.Session(config=configuration) as sess:

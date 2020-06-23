@@ -1,47 +1,42 @@
 import pandas as pd
 import os
-# 这个根据文件系统的目录来决定
-# 使用pycharm运行
-if '/prophet_compared' in os.getcwd():
-    os.chdir('../..')
+import sys
 # 使用bash运行，目录再 pycharm/gluon
-elif '/lzl_shared_ssm' not in os.getcwd():
+if '/lzl_shared_ssm' not in os.getcwd():
     os.chdir('gluonts/lzl_shared_ssm')
+    sys.path.insert(0, '../..')
+
+
 from gluonts.model.prophet import ProphetPredictor
-from gluonts.lzl_shared_ssm.utils import create_dataset_if_not_exist ,time_format_from_frequency_str
+from gluonts.lzl_shared_ssm.utils import create_dataset_if_not_exist ,time_format_from_frequency_str, add_time_mark_to_file
 import pickle
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 import numpy as np
 
-target_data_index = 0
 target = 'btc,eth'
 environment = 'gold'
-maxlags=0
 start = '2018-08-02'
 freq = '1D'
 timestep = 503
 pred = 5
-plot_length = 5*pred
 past = 90
 slice = 'overlap'
 ds_name_prefix = 'data_process/processed_data/{}_{}_{}_{}.pkl'
-save_path = 'logs/btc_eth(prophet)/pred_pic_{}_past({})_pred({})'.format(slice , past , pred)
-plot_result_path =  '_'.join([
+# train_log_save_path = 'logs/btc_eth(prophet)/pred_pic_{}_past({})_pred({})'.format(slice, past, pred)
+result_params = '_'.join([
                                 'freq(%s)'%(freq),
-                                'lags(%d)'%(maxlags),
                                'past(%d)'%(past)
                                 ,'pred(%d)'%(pred)
                              ]
                         )
-if not os.path.exists(save_path):
-    os.makedirs(save_path)
-quantiles = [0.05 , 0.25 , 0.5 , 0.75 , 0.95]
-def alpha_for_percentile(p):
-    return (p / 100.0) ** 0.3
+# if not os.path.exists(train_log_save_path):
+#     os.makedirs(train_log_save_path)
+# quantiles = [0.05 , 0.25 , 0.5 , 0.75 , 0.95]
+# def alpha_for_percentile(p):
+#     return (p / 100.0) ** 0.3
 
 if __name__ == '__main__':
-    ds_name = target.split(',')[target_data_index]
     # 导入 target 以及 environment 的数据
     if slice == 'overlap':
         series = timestep - past - pred + 1
@@ -52,8 +47,12 @@ if __name__ == '__main__':
     else:
         series = 1
         print('每个数据集的序列数量为 ', series ,'情景为长单序列')
-    result_root_path = 'evaluate/results'
-    forecast_result_saved_path = os.path.join(result_root_path ,'prophet(%s)_'%(target)+plot_result_path+'_2.pkl')
+    result_root_path  = 'evaluate/results/{}_slice({})_past({})_pred({})'.format(target.replace(',' ,'_') , slice ,past , pred)
+    if not os.path.exists(result_root_path):
+        os.makedirs(result_root_path)
+    forecast_result_saved_path = os.path.join(result_root_path,'prophet(%s)_' % (target.replace(',' ,'_')) + result_params + '.pkl')
+    forecast_result_saved_path = add_time_mark_to_file(forecast_result_saved_path)
+
     # 目标序列的数据路径
     target_path = {ds_name: ds_name_prefix.format(
         '%s_start(%s)_freq(%s)' % (ds_name, start,freq), '%s_DsSeries_%d' % (slice, series),
@@ -85,5 +84,6 @@ if __name__ == '__main__':
                 sample_forecasts.append(sorted_samples)
 
         sample_forecasts = np.concatenate(sample_forecasts, axis=0)
+        print('把预测结果保存在-->', forecast_result_saved_path)
         with open(forecast_result_saved_path , 'wb') as fp:
             pickle.dump(sample_forecasts , fp)

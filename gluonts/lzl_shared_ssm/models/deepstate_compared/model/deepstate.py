@@ -30,10 +30,11 @@ from gluonts.transform.sampler import TestSplitSampler
 from gluonts.dataset.field_names import FieldName
 from .scaler import MeanScaler , NOPScaler
 from gluonts.lzl_shared_ssm.utils import (plot_train_epoch_loss
-                                          , plot_train_pred_NoSSMnum
-                                          , del_previous_model_params
-                                          , complete_batch
-                                          ,create_dataset_if_not_exist)
+, plot_train_pred_NoSSMnum
+, del_previous_model_params
+, complete_batch
+, create_dataset_if_not_exist
+, add_time_mark_to_file, add_time_mark_to_dir, get_model_params_name)
 from gluonts.lzl_shared_ssm.models.data_loader import TrainDataLoader_OnlyPast ,InferenceDataLoader_WithFuture, mergeIterOut , stackIterOut
 
 
@@ -505,9 +506,13 @@ class DeepStateNetwork(object):
 
         # Initialize or reload variables
         if self.config.reload_model is not '':
-            params_path = os.path.join(self.config.logs_dir, self.config.reload_model, "model_params")
+            if self.config.reload_time == '':
+                model_params = 'model_params'
+            else:
+                model_params = 'model_params_{}'.format(self.config.reload_time)
+            params_path = os.path.join(self.config.logs_dir, self.config.reload_model, model_params)
             print("Restoring model in %s" % params_path)
-            param_name = os.path.splitext(os.listdir(params_path)[0])[0]
+            param_name = get_model_params_name(params_path)
             params_path = os.path.join(params_path, param_name)
             self.saver.restore(self.sess, params_path)
         else:
@@ -535,7 +540,9 @@ class DeepStateNetwork(object):
                                             , 'dropout(%s)' % (str(self.config.dropout_rate))
                                      ])
                                            )
-        print('训练参数目录-->', self.train_log_path)
+        params_path = os.path.join(self.train_log_path, 'model_params')
+        params_path = add_time_mark_to_dir(params_path)
+        print('训练参数保存在 --->', params_path)
         if not os.path.isdir(self.train_log_path):
             os.makedirs(self.train_log_path)
 
@@ -601,17 +608,17 @@ class DeepStateNetwork(object):
             )
 
             if avg_epoch_loss < best_epoch_info['metric_value']:
-                del_previous_model_params(self.train_log_path)
+                del_previous_model_params(params_path)
                 best_epoch_info['metric_value'] = avg_epoch_loss
                 best_epoch_info['epoch_no'] = epoch_no
-                self.train_save_path = os.path.join(self.train_log_path, "model_params"
+                self.train_save_path = os.path.join(params_path
                                                     ,'best_{}_epoch({})_nll({})'.format(self.config.target.replace(',' ,'_'),
                                                          epoch_no,
                                                          best_epoch_info['metric_value'])
                                                     )
                 self.saver.save(sess, self.train_save_path)
                 #'/{}_{}_best.ckpt'.format(self.dataset,epoch_no)
-        plot_train_epoch_loss(train_plot_points, self.train_log_path)
+        plot_train_epoch_loss(train_plot_points, self.train_log_path ,params_path.split('_')[-1])
         logging.info(
             f"Loading parameters from best epoch "
             f"({best_epoch_info['epoch_no']})"
@@ -638,16 +645,17 @@ class DeepStateNetwork(object):
                 print('something bad appears')
             finally:
                 print('whatever ! life is still fantastic !')
-        plot_result_root_path = 'evaluate/results'
+        eval_result_root_path = 'evaluate/results/{}_slice({})_past({})_pred({})'.format(self.config.target.replace(',' ,'_') , self.config.slice ,self.config.past_length , self.config.pred_length)
         model_result = [];
 
-        if not os.path.exists(plot_result_root_path):
-            os.makedirs(plot_result_root_path)
-        model_result_path = os.path.join(plot_result_root_path, '{}.pkl'.format(
+        if not os.path.exists(eval_result_root_path):
+            os.makedirs(eval_result_root_path)
+        model_result_path = os.path.join(eval_result_root_path, '{}.pkl'.format(
             'deepstate(%s)_' % (self.config.target)
             + (self.train_log_path.split('/')[-1] if hasattr(self, 'train_log_path') else self.config.reload_model)
         ))
-
+        model_result_path = add_time_mark_to_file(model_result_path)
+        print('当前结果保存在--->' , model_result_path)
         for batch_no, target_batch in enumerate(self.target_test_loader):
             print('当前做Inference的第{}个batch的内容'.format(batch_no))
             if target_batch != None:
@@ -667,8 +675,10 @@ class DeepStateNetwork(object):
                     samples_predict = sess.run(self.predict_result,feed_dict =  feed_dict)[:bs]
                     samples_predict = np.expand_dims(samples_predict ,axis=0) #(1 ,bs ,samples, seq)
                     batch_concat.append(samples_predict)
+
                 batch_concat = np.concatenate(batch_concat , axis=0) #(ssm_num ,bs , samples, seq)
                 model_result.append(batch_concat)
+
         model_result = np.concatenate(model_result , axis=1)
         with open(model_result_path, 'wb') as fp:
             pickle.dump(model_result, fp)

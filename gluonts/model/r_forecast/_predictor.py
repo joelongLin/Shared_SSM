@@ -45,7 +45,7 @@ class RForecastPredictor(RepresentablePredictor):
     package.  In order to use it you need to install R and run::
 
         pip install rpy2
-        R -e 'install.packages(c("forecast", "nnfor"), repos="https://cloud.r-project.org")'
+        R -qe 'install.packages(c("forecast", "nnfor"), repos="https://cloud.r-project.org")'
 
     Parameters
     ----------

@@ -1,6 +1,7 @@
 # -*- coding: UTF-8 -*-
 # author : joelonglin
 import tensorflow as tf
+from tensorflow.contrib import slim
 import numpy as np
 import pandas as pd
 import pickle
@@ -9,9 +10,12 @@ import os
 from tqdm import tqdm
 import logging
 import matplotlib
+
+from ..utils import get_model_params_name
+
 matplotlib.use('Agg') # 用这句话避免 xshell 调参时，出现X11转发
 from gluonts.time_feature import time_features_from_frequency_str
-from ..utils import time_format_from_frequency_str
+
 from gluonts.model.forecast import SampleForecast
 from gluonts.transform import (Chain ,
                                AddInitTimeFeature,
@@ -25,7 +29,13 @@ from .scaler import MeanScaler , NOPScaler
 from .filter import MultiKalmanFilter
 from ..utils import create_dataset_if_not_exist , complete_batch , make_nd_diag
 from .data_loader import TrainDataLoader_OnlyPast ,InferenceDataLoader_WithFuture, mergeIterOut , stackIterOut
-from ..utils import del_previous_model_params , plot_train_epoch_loss , plot_train_pred
+from ..utils import (del_previous_model_params
+                    ,time_format_from_frequency_str
+                    , plot_train_epoch_loss
+                    , plot_train_pred
+                    , samples_with_mean_cov
+                    , add_time_mark_to_file
+                    , add_time_mark_to_dir)
 
 #一些公用字符串
 INIT_TIME = 'init_time'
@@ -202,40 +212,41 @@ class SharedSSM(object):
                                                include_future=True)
 
     def build_module(self):
-        # 放入可能出现的SSM参数
-        #  A(transition)是对角矩阵表示在转移的时候尽可能保持不变, B(control) 和 C(emission) 从高斯分布中随机进行采样
-        init = np.array([np.eye(self.config.dim_l).astype(np.float32) for _ in range(self.config.K)])  # (K, dim_z , dim_z)
-        init = np.tile(init, reps=(self.ssm_num, 1, 1, 1))
-        A = tf.get_variable('A', initializer=init)
-        # A = tf.tile(tf.expand_dims(A,0), multiples=(self.ssm_num, 1, 1, 1))  # (ssm_num , K , dim_z, dim_z)
+        with  tf.variable_scope('global_variable', reuse=tf.AUTO_REUSE):
+            # 放入可能出现的SSM参数
+            #  A(transition)是对角矩阵表示在转移的时候尽可能保持不变, B(control) 和 C(emission) 从高斯分布中随机进行采样
+            init = np.array([np.eye(self.config.dim_l).astype(np.float32) for _ in range(self.config.K)])  # (K, dim_z , dim_z)
+            init = np.tile(init, reps=(self.ssm_num, 1, 1, 1))
+            A = tf.get_variable('A', initializer=init)
+            # A = tf.tile(tf.expand_dims(A,0), multiples=(self.ssm_num, 1, 1, 1))  # (ssm_num , K , dim_z, dim_z)
 
-        init = np.array([self.config.init_kf_matrices * np.random.randn(self.config.dim_l, self.config.dim_u).astype(np.float32)
-                      for _ in range(self.config.K)])
-        init = np.tile(init, reps=(self.ssm_num, 1, 1, 1))
-        B = tf.get_variable('B' , initializer=init)
-        # B = tf.tile(tf.expand_dims(B,0) , multiples=(self.ssm_num, 1, 1, 1))  # (ssm_num , K , dim_z, dim_z)
+            init = np.array([self.config.init_kf_matrices * np.random.randn(self.config.dim_l, self.config.dim_u).astype(np.float32)
+                          for _ in range(self.config.K)])
+            init = np.tile(init, reps=(self.ssm_num, 1, 1, 1))
+            B = tf.get_variable('B' , initializer=init)
+            # B = tf.tile(tf.expand_dims(B,0) , multiples=(self.ssm_num, 1, 1, 1))  # (ssm_num , K , dim_z, dim_z)
 
-        init = np.array([self.config.init_kf_matrices * np.random.randn(self.config.dim_z, self.config.dim_l).astype(np.float32)
-                      for _ in range(self.config.K)])
-        init = np.tile(init, reps=(self.ssm_num, 1, 1, 1))
-        C = tf.get_variable('C' , initializer=init)
-        # C = tf.tile(tf.expand_dims(C,0), multiples=(self.ssm_num, 1, 1, 1))  # (ssm_num , K , dim_z, dim_z)
+            init = np.array([self.config.init_kf_matrices * np.random.randn(self.config.dim_z, self.config.dim_l).astype(np.float32)
+                          for _ in range(self.config.K)])
+            init = np.tile(init, reps=(self.ssm_num, 1, 1, 1))
+            C = tf.get_variable('C' , initializer=init)
+            # C = tf.tile(tf.expand_dims(C,0), multiples=(self.ssm_num, 1, 1, 1))  # (ssm_num , K , dim_z, dim_z)
 
-        # Initial observed variable z_0
-        init = np.zeros((self.config.dim_z,), dtype=np.float32)
-        # init = np.tile(init, reps=(self.ssm_num, 1))
-        z_0 = tf.get_variable('z_0' , initializer=init)
-        z_0 = tf.tile(tf.expand_dims(z_0,0) ,multiples=(self.ssm_num,1))
+            # Initial observed variable z_0
+            init = np.zeros((self.config.dim_z,), dtype=np.float32)
+            # init = np.tile(init, reps=(self.ssm_num, 1))
+            z_0 = tf.get_variable('z_0' , initializer=init)
+            z_0 = tf.tile(tf.expand_dims(z_0,0) ,multiples=(self.ssm_num,1))
 
-        # p(l_1) , SSM 隐空间的的的初始状态, mu , Sigma 分别代表 隐状态的 均值和方差
-        #mu = np.zeros((self.config.batch_size, self.config.dim_l), dtype=np.float32)
-        #mu = np.tile(mu, reps=(self.ssm_num, 1, 1)) #(ssm_num , bs , dim_l)
-        #mu = tf.get_variable('mu' , initializer=mu)
-        # mu = tf.tile(tf.expand_dims(mu, 0), multiples=(self.ssm_num, 1, 1))
-        #Sigma = np.tile(self.config.init_cov * np.eye(self.config.dim_l, dtype=np.float32), (self.config.batch_size, 1, 1))
-        #Sigma = np.tile(Sigma, reps=(self.ssm_num, 1, 1, 1)) #(ssm_num , bs , dim_l , dim_l)
-        #Sigma = tf.get_variable('Sigma' , initializer=Sigma)
-        # Sigma = tf.tile(tf.expand_dims(Sigma, 0), multiples=(self.ssm_num, 1, 1, 1))
+            # p(l_1) , SSM 隐空间的的的初始状态, mu , Sigma 分别代表 隐状态的 均值和方差
+            #mu = np.zeros((self.config.batch_size, self.config.dim_l), dtype=np.float32)
+            #mu = np.tile(mu, reps=(self.ssm_num, 1, 1)) #(ssm_num , bs , dim_l)
+            #mu = tf.get_variable('mu' , initializer=mu)
+            # mu = tf.tile(tf.expand_dims(mu, 0), multiples=(self.ssm_num, 1, 1))
+            #Sigma = np.tile(self.config.init_cov * np.eye(self.config.dim_l, dtype=np.float32), (self.config.batch_size, 1, 1))
+            #Sigma = np.tile(Sigma, reps=(self.ssm_num, 1, 1, 1)) #(ssm_num , bs , dim_l , dim_l)
+            #Sigma = tf.get_variable('Sigma' , initializer=Sigma)
+            # Sigma = tf.tile(tf.expand_dims(Sigma, 0), multiples=(self.ssm_num, 1, 1, 1))
 
         self.init_vars = dict(A=A, B=B, C=C, z_0=z_0)
         # self.init_vars['mu'] =mu
@@ -246,7 +257,7 @@ class SharedSSM(object):
         else:
             self.scaler = NOPScaler(keepdims=False)
 
-        with  tf.variable_scope('prior_exactor', initializer=tf.contrib.layers.xavier_initializer()):
+        with tf.variable_scope('prior_exactor', initializer=tf.contrib.layers.xavier_initializer()):
             self.prior_mean_model = tf.layers.Dense(units=self.config.dim_l,dtype=tf.float32 ,name='prior_mean')
             self.prior_cov_diag_model = tf.layers.Dense(
                 units=self.config.dim_l,
@@ -271,7 +282,7 @@ class SharedSSM(object):
             self.time_feature_lstm = tf.nn.rnn_cell.MultiRNNCell(self.time_feature_lstm)
             # self.time_feature_lstm = tf.nn.rnn_cell.BasicLSTMCell(self.time_feature_lstm)
 
-            # 关于 noise 的大小是否要 限定在 0 和 1 之间，也值得讨论
+            # 关于 noise 的大小是否要 限B定在 0 和 1 之间，也值得讨论
             self.noise_emission_model = tf.layers.Dense(units=1, dtype=tf.float32, name='noise_emission' , activation=tf.nn.softmax)
             self.noise_transition_model = tf.layers.Dense(units=1 , dtype=tf.float32 , name='noise_transition' , activation=tf.nn.softmax)
 
@@ -369,7 +380,6 @@ class SharedSSM(object):
         train_R = tf.expand_dims(train_R , axis=-1)
 
         print('train network---生成噪声 Q shape : {} , R shape : {}'.format(train_Q.shape , train_R.shape))
-
         # 对 environment 进行处理
         env_rnn_out, self.env_train_last_state = tf.nn.dynamic_rnn(
             cell=self.env_lstm,
@@ -384,9 +394,11 @@ class SharedSSM(object):
                 axis = 0
             ) #(ssm_num , bs ,seq , dim_u)
         else:
-            train_u = tf.Variable(initial_value=tf.zeros(shape=(self.ssm_num , self.config.batch_size , self.config.past_length , self.config.dim_u),dtype=tf.float32)
-                                  ,trainable=False, name='train_u'
-                      )
+            #重定向 放入KF的 global_B
+            self.init_vars['B'] = tf.get_variable('B' , trainable=False , initializer=self.init_vars['B'])
+            train_u = tf.constant(
+                np.zeros(shape=(self.ssm_num , self.config.batch_size , self.config.past_length , self.config.dim_u),dtype=np.float32)
+            )
         print('train network---由环境变量产生的 u: ' ,  train_u)
 
         # 为 Kalman Filter 提供LSTM的初始状态
@@ -418,14 +430,14 @@ class SharedSSM(object):
         # pred_l_0[(ssm_num, bs , seq ,dim_l),(ssm_num, bs , seq ,dim_l,dim_l)]
         # pred_alpha_0 (ssm_num, bs ,K)
         # filter_ll (ssm_num ,bs ,seq)
-        self.z_pred_scaled ,self.pred_l_0, self.pred_alpha_0 , alpha_train_states,self.filter_ll = self.train_kf.filter()
+        self.z_trained_scaled , self.pred_l_0, self.pred_alpha_0 , alpha_train_states, self.filter_ll , self.train_state = self.train_kf.filter()
         self.alpha_train_last_state = tf.nn.rnn_cell.LSTMStateTuple(
             c=alpha_train_states.c[-1],
             h=alpha_train_states.h[-1]
         )
 
         # 计算 loss 的batch情况，但是加负号
-        self.train_z_mean = tf.math.multiply(self.z_pred_scaled, tf.expand_dims(self.target_scale, 2))
+        self.train_z_mean = tf.math.multiply(self.z_trained_scaled, tf.expand_dims(self.target_scale, 2))
         self.filter_batch_nll_mean = tf.math.reduce_mean(
             tf.math.reduce_mean(-self.filter_ll, axis=-1)
             ,axis=0
@@ -435,8 +447,6 @@ class SharedSSM(object):
         ) #()
         optimizer = tf.train.AdamOptimizer(learning_rate=self.config.learning_rate)
         gvs = optimizer.compute_gradients(self.filter_nll_mean)
-        for grad ,var in gvs:
-            print(var , '--->' ,grad)
         capped_gvs = [(tf.clip_by_value(grad, -1., 10.), var) for grad, var in gvs if grad != None]
         self.train_op = optimizer.apply_gradients(capped_gvs)
 
@@ -469,17 +479,16 @@ class SharedSSM(object):
         )  # (bs,seq_length ,hidden_dim)
 
         if self.config.use_env:
-            pred_u = tf.stack(
+            self.pred_u = tf.stack(
                 [model(env_rnn_out)
                  for model in self.u_model],
                 axis=0
             )  # (ssm_num , bs ,pred , dim_u)
         else:
-            pred_u = tf.Variable(
-                initial_value=tf.zeros(shape=(self.ssm_num, self.config.batch_size, self.config.pred_length, self.config.dim_u),dtype=tf.float32)
-                , trainable=False, name='pred_u'
+            self.pred_u = tf.constant(
+                np.zeros(shape=(self.ssm_num, self.config.batch_size, self.config.pred_length, self.config.dim_u),dtype=np.float32)
             )
-        print('pred network---环境变量生成的信息：' , pred_u)
+        print('pred network---环境变量生成的信息：' , self.pred_u)
         self.pred_kf = MultiKalmanFilter( ssm_num = self.ssm_num,
                                           dim_l=self.config.dim_l,
                                           dim_z=self.config.dim_z,
@@ -490,14 +499,14 @@ class SharedSSM(object):
                                           C=self.init_vars['C'],  # Measurement function
                                           R=pred_R,  # measurement noise
                                           Q=pred_Q,  # process noise
-                                          u=pred_u,
+                                          u=self.pred_u,
                                           alpha_0=self.pred_alpha_0,
                                           mu=self.pred_l_0[0],
                                           Sigma=self.pred_l_0[1],
                                           alpha_fn=self.alpha,
                                           state=self.alpha_train_last_state
                                       )
-        _, _, self.pred_z_mean_scaled , self.pred_z_cov, _, _, _, _, _ = self.pred_kf.compute_forwards_pred_mode()
+        self.pred_l_mean , self.pred_l_cov, self.pred_z_mean_scaled , self.pred_z_cov = self.pred_kf.compute_forwards_pred_mode()
         self.pred_z_mean_scaled = tf.transpose(self.pred_z_mean_scaled, [1,2,0,3])
         self.pred_z_cov = tf.transpose(self.pred_z_cov , [1,2,0,3,4])
         #(pred ,ssm_num, bs, dim_z)
@@ -513,9 +522,13 @@ class SharedSSM(object):
 
         # Initialize or reload variables
         if self.config.reload_model is not '':
-            params_path = os.path.join(self.config.logs_dir, self.config.reload_model, "model_params")
+            if self.config.reload_time  == '':
+                model_params = 'model_params'
+            else:
+                model_params = 'model_params_{}'.format(self.config.reload_time)
+            params_path = os.path.join(self.config.logs_dir, self.config.reload_model, model_params)
             print("Restoring model in %s" % params_path)
-            param_name = os.path.splitext(os.listdir(params_path)[0])[0]
+            param_name = get_model_params_name(params_path)
             params_path = os.path.join(params_path, param_name)
             self.saver.restore(self.sess, params_path)
         else:
@@ -529,31 +542,35 @@ class SharedSSM(object):
             print('有已经训练好的参数,不需要训练~~~~~')
             return
         sess = self.sess
-        self.train_log_path = os.path.join(self.config.logs_dir,
-                                   '_'.join([
-                                                'freq(%s)'%(self.config.freq),
-                                                'lags(%d)'%(self.config.maxlags),
-                                               'past(%d)'%(self.config.past_length)
-                                                ,'pred(%d)'%(self.config.pred_length)
-                                                , 'u(%d)' % (self.config.dim_u)
-                                                , 'l(%d)' % (self.config.dim_l)
-                                                , 'K(%d)' % (self.config.K)
-                                                , 'T(%d-%d)' % (
-                                                     self.config.time_exact_layers, self.config.time_exact_cells)
-                                                , 'E(%d-%d)' % (
-                                                     self.config.env_exact_layers, self.config.env_exact_cells)
-                                                , 'α(%d)' % (
-                                                 self.config.alpha_units)
-                                                , 'epoch(%d)' % (self.config.epochs)
-                                                , 'bs(%d)' % (self.config.batch_size)
-                                                , 'bn(%d)' % (self.config.num_batches_per_epoch)
-                                                , 'lr(%s)' % (str(self.config.learning_rate))
-                                                , 'initKF(%s)' % (str(self.config.init_kf_matrices))
-                                                , 'initCov(%s)' % (str(self.config.init_cov))
-                                                , 'dropout(%s)' % (str(self.config.dropout_rate))
-                                             ]
-                                        )
-                                           )
+        log_name = '_'.join([
+                            'freq(%s)'%(self.config.freq),
+                            'env(%s)' % (self.config.environment) if self.config.use_env else '',
+                            'lags(%d)'%(self.config.maxlags),
+                           'past(%d)'%(self.config.past_length)
+                            ,'pred(%d)'%(self.config.pred_length)
+                            , 'u(%d)' % (self.config.dim_u)
+                            , 'l(%d)' % (self.config.dim_l)
+                            , 'K(%d)' % (self.config.K)
+                            , 'T(%d-%d)' % (
+                                 self.config.time_exact_layers, self.config.time_exact_cells)
+                            , 'E(%d-%d)' % (
+                                 self.config.env_exact_layers, self.config.env_exact_cells)
+                            , 'α(%d)' % (
+                             self.config.alpha_units)
+                            , 'epoch(%d)' % (self.config.epochs)
+                            , 'bs(%d)' % (self.config.batch_size)
+                            , 'bn(%d)' % (self.config.num_batches_per_epoch)
+                            , 'lr(%s)' % (str(self.config.learning_rate))
+                            , 'initKF(%s)' % (str(self.config.init_kf_matrices))
+                            , 'dropout(%s)' % (str(self.config.dropout_rate))
+
+                         ]
+                    )
+        self.train_log_path = os.path.join(self.config.logs_dir,log_name)
+        params_path = os.path.join(self.train_log_path , 'model_params')
+        params_path = add_time_mark_to_dir(params_path)
+        print('训练参数保存在 --->', params_path)
+
         if not os.path.isdir(self.train_log_path):
             os.makedirs(self.train_log_path)
         num_batches = self.config.num_batches_per_epoch
@@ -586,6 +603,12 @@ class SharedSSM(object):
 
                     batch_nll , _   = sess.run([self.filter_batch_nll_mean , self.train_op]
                                             , feed_dict=feed_dict)
+                    if epoch_no % 10 == 0 and epoch_no > 0 :
+                        forward_state = sess.run(self.train_state,feed_dict = feed_dict )
+                        # 查看 latent state 训练的过程
+                        path = 'plot/latent_state/' + log_name + '/epoch_{}'.format(epoch_no)
+                        l_mean = forward_state[0];
+                        l_cov = forward_state[1];
                     # 将训练时的 output_mean 和 真实值进行比对 #(ssm_num ,bs , seq)
                     # batch_pred = sess.run(self.train_z_mean, feed_dict=feed_dict)
                     # plot_train_pred(path=self.train_log_path,targets=self.config.target, data=target_batch_input['past_target'], pred=batch_pred,
@@ -623,16 +646,16 @@ class SharedSSM(object):
             )
             #如果当前 epoch 的结果比之前的要好，则立刻取代，保存
             if avg_epoch_loss < best_epoch_info['filter_nll']:
-                del_previous_model_params(self.train_log_path)
+                del_previous_model_params(params_path)
                 best_epoch_info['filter_nll'] = avg_epoch_loss
                 best_epoch_info['epoch_no'] = epoch_no
-                self.train_save_path = os.path.join(self.train_log_path, "model_params"
+                self.train_save_path = os.path.join(params_path
                                                     ,'best_{}_epoch({})_nll({})'.format(self.config.target.replace(',' ,'_'),
                                                          epoch_no,
                                                          best_epoch_info['filter_nll'])
                                                     )
                 self.saver.save(sess, self.train_save_path)
-        plot_train_epoch_loss(train_plot_points, self.train_log_path)
+        plot_train_epoch_loss(train_plot_points, self.train_log_path ,params_path.split('_')[-1])
         logging.info(
             f"Loading parameters from best epoch "
             f"({best_epoch_info['epoch_no']})"
@@ -660,24 +683,31 @@ class SharedSSM(object):
             finally:
                 print('whatever ! life is still fantastic !')
 
-        plot_result_root_path = 'evaluate/results'
+        eval_result_root_path = 'evaluate/results/{}_slice({})_past({})_pred({})'.format(self.config.target.replace(',' ,'_') , self.config.slice ,self.config.past_length , self.config.pred_length)
         model_result = []; ground_truth_result =[];
 
-        if not os.path.exists(plot_result_root_path):
-            os.makedirs(plot_result_root_path)
+        if not os.path.exists(eval_result_root_path):
+            os.makedirs(eval_result_root_path)
         if self.config.use_env:
             result_prefix = 'shared_ssm(%s)_'%(self.config.target)
         else:
             result_prefix = 'shared_ssm_without_env(%s)_' % (self.config.target)
-        model_result_path = os.path.join(plot_result_root_path,'{}.pkl'.format(
+        model_result_path = os.path.join(eval_result_root_path,'{}.pkl'.format(
             result_prefix
             + (self.train_log_path.split('/')[-1] if hasattr(self, 'train_log_path') else self.config.reload_model)
+            + ('_num_samples(%d)'%(self.config.num_samples) if self.config.num_samples !=1 else '')
         ))
+        model_result_path = add_time_mark_to_file(model_result_path)
+        print('结果保存在-->',model_result_path)
         # 把处理完的数据放到 evaluate/results 里面
-        ground_truth_path = os.path.join(plot_result_root_path,'{}.pkl'.format(
-            'ground_truth(%s)_'%(self.config.target)
-            + (self.train_log_path.split('/')[1] if hasattr(self, 'train_log_path') else self.config.reload_model)
-        ))
+        ground_truth_path = os.path.join(eval_result_root_path,'{}.pkl'.format(
+                'ground_truth(%s)_start(%s)_freq(%s)_past(%d)_pred(%d)'
+                %(self.config.target, self.config.start , self.config.freq
+                  , self.config.past_length , self.config.pred_length)
+            )
+        )
+        print('ground_truth的保存的地方：' ,ground_truth_path)
+
 
         #不沉迷画图，把预测结果保存到pickle对象里面
         for ( target_batch ,  env_batch)in zip(
@@ -690,9 +720,10 @@ class SharedSSM(object):
             env_batch_input = env_batch[1]
             if target_batch_input != None and env_batch_input != None:
                 # 主要是为了能够获取时间的信息
-                ground_truth_result.append(target_batch_input)
+                if not os.path.exists(ground_truth_path):
+                    ground_truth_result.append(target_batch_input)
 
-                # TODO:这里要注意，因为我的batch_size被固定了，所以，这里要添加一个对数量的补全
+                # 这里要注意，因为我的batch_size被固定了，所以，这里要添加一个对数量的补全
                 target_batch_complete , bs = complete_batch(batch = target_batch_input , batch_size = self.config.batch_size)
                 env_batch_complete , _ = complete_batch(batch=env_batch_input, batch_size=self.config.batch_size)
                 # np.zeros(env_batch_complete['past_target'].shape)  np.zeros(env_batch_complete['future_target'].shape)
@@ -711,22 +742,23 @@ class SharedSSM(object):
 
                 # 这个部分只是为了方便画图，所以才把训练时候的结果也运行出来
                 batch_train_z, z_scale = sess.run([self.train_z_mean[:,:bs], self.target_scale[:,:bs]], feed_dict=feed_dict)
-                batch_pred_z_mean, batch_pred_z_cov  = sess.run(
+                batch_pred_l_mean , batch_pred_l_cov , batch_pred_u = sess.run(
+                    [self.pred_l_mean , self.pred_l_cov , self.pred_u] , feed_dict = feed_dict
+                )
+                batch_pred_z_mean_scaled, batch_pred_z_cov  = sess.run(
                     [self.pred_z_mean_scaled[:,:bs] , self.pred_z_cov[:,:bs] ], feed_dict=feed_dict
                 )
 
-                batch_ground_truth = np.concatenate(
-                    [target_batch_complete['past_target'] , target_batch_complete['future_target']]
-                    ,axis = 2
-                )[:,:bs]
-                # pred的结果应该没有scale回去，因为在后面需要这个结果 进行 sample ，暂时不恢复
-                mean_pred = np.concatenate(
-                    [batch_train_z , np.multiply(batch_pred_z_mean, np.expand_dims(z_scale , axis=2))]
-                    , axis=2
-                )
-                model_result.append(mean_pred)
-
-
+                # 以下两个变量主要用于绘图
+                # batch_ground_truth = np.concatenate(
+                #     [target_batch_complete['past_target'] , target_batch_complete['future_target']]
+                #     ,axis = 2
+                # )[:,:bs]
+                #  这里的mean_pred是不进行采样的
+                # mean_pred = np.concatenate(
+                #     [batch_train_z, np.multiply(batch_pred_z_mean_scaled, np.expand_dims(z_scale, axis=2))]
+                #     , axis=2
+                # )
                 # 以下代码用于输出当前训练的预测图，但是现在为了比较多个算法的性能，
                 # if hasattr(self , 'train_log_path'):
                 #     pred_plot_path = self.train_log_path
@@ -737,11 +769,29 @@ class SharedSSM(object):
                 #                 plot_length=self.config.pred_length*5,
                 #                 time_start=target_batch_complete['start'],freq=self.config.freq
                 # )
-        model_result = np.concatenate(model_result, axis=1) #(ssm_num ,bs, seq,1)
+
+                if self.config.num_samples == 1:
+                    mean_pred = np.concatenate(
+                        [batch_train_z , np.multiply(batch_pred_z_mean_scaled, np.expand_dims(z_scale , axis=2))]
+                        , axis=2
+                    )
+                    model_result.append(mean_pred)
+                else:
+                    scale = np.expand_dims(z_scale,axis=2)#(ssm_num ,bs , dim_z) --> #(ssm_num ,bs , 1 , dim_z)
+                    batch_pred_z_mean = np.multiply(scale , batch_pred_z_mean_scaled)
+                    pred_samples = samples_with_mean_cov(batch_pred_z_mean , batch_pred_z_cov , self.config.num_samples)
+                    # pred_samples = np.multiply(scale , pred_samples_scale)
+                    model_result.append(pred_samples)
+                    pass
+
+
+
+        model_result = np.concatenate(model_result, axis=1) #(ssm_num ,bs, seq,num_samples,1)
         with open(model_result_path , 'wb') as fp:
             pickle.dump(model_result , fp)
-        with open(ground_truth_path , 'wb') as fp:
-            pickle.dump(ground_truth_result ,fp)
+        if not os.path.exists(ground_truth_path):
+            with open(ground_truth_path , 'wb') as fp:
+                pickle.dump(ground_truth_result ,fp)
 
         return self
 

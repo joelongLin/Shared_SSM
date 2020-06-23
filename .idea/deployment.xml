@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
-  <component name="PublishConfigData" autoUpload="Always" serverName="gluonts">
+  <component name="PublishConfigData" autoUpload="Always" serverName="gluonts_238">
     <serverData>
       <paths name="gluonts">
         <serverdata>
@@ -14,6 +14,15 @@
           <mappings>
             <mapping deploy="data1/lzl/python/gluon" local="$PROJECT_DIR$" web="/" />
           </mappings>
+          <excludedPaths>
+            <excludedPath path="/data1/lzl/python/gluon/gluonts/lzl_shared_ssm/evaluate/results/" />
+            <excludedPath path="/data1/lzl/python/gluon/gluonts/lzl_shared_ssm/data_process/raw_data" />
+            <excludedPath path="/data1/lzl/python/gluon/gluonts/lzl_shared_ssm/data_process/processed_data" />
+            <excludedPath path="/data1/lzl/python/gluon/gluonts/lzl_shared_ssm/logs" />
+            <excludedPath path="/data1/lzl/python/gluon/gluonts/lzl_deepstate/data" />
+            <excludedPath path="*.png" />
+            <excludedPath path="*.pkl" />
+          </excludedPaths>
         </serverdata>
       </paths>
       <paths name="lzl@10.21.25.238:22">

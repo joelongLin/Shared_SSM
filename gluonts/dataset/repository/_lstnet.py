@@ -12,7 +12,7 @@
 # permissions and limitations under the License.
 
 """
-Here we reuse the datasets used by LSTNet as the processed url of the datasets
+Here we reuse the datasets used by LSTNet_compared as the processed url of the datasets
 are available on GitHub.
 """
 import json
@@ -81,7 +81,7 @@ datasets_info = {
         # url=root + "electricity/electricity.txt.gz",
         url = '../../../../dataset/electricity.txt.gz', # 放在我电脑上的相对路径
         # original dataset can be found at https://archive.ics.uci.edu/ml/datasets/ElectricityLoadDiagrams20112014#
-        # the aggregated ones that is used from LSTNet filters out from the initial 370 series the one with no data
+        # the aggregated ones that is used from LSTNet_compared filters out from the initial 370 series the one with no data
         # in 2011
         num_series=321,
         num_time_steps=26304,
@@ -95,7 +95,7 @@ datasets_info = {
         name="traffic",
         url=root + "traffic/traffic.txt.gz",
         # note there are 963 in the original dataset from https://archive.ics.uci.edu/ml/datasets/PEMS-SF
-        # but only 862 in LSTNet
+        # but only 862 in LSTNet_compared
         num_series=862,
         num_time_steps=17544,
         prediction_length=24,

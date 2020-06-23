@@ -1,13 +1,32 @@
+#ide #
 .idea/
+.vscode/
 
 # some data file of the project
+gluonts/lzl_shared_ssm/data_process/test/
 gluonts/lzl_deepstate/logs/
 gluonts/lzl_deepstate/data/
 gluonts/lzl_data_from_gluonts/others/
+gluonts/lzl_data_from_gluonts/pic/
+gluonts/lzl_data_from_gluonts/tmp/
+gluonts/lzl_data_from_gluonts/predictor/
 gluonts/lzl_data_from_gluonts/*.py
 
 # logging Files #
 *.log
+gluonts/lzl_shared_ssm/logs/
+
+# dataset#
+gluonts/lzl_shared_ssm/data_process/raw_data
 
 # pickle Files #
 *.pkl
+
+# picture #
+*.png
+
+# cache #
+*.pyc
+*.swp
+*.typesafe
+

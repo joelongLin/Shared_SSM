@@ -7,7 +7,12 @@ from .tool_func import (
     plot_train_epoch_loss,
     plot_train_pred_NoSSMnum,
     del_previous_model_params,
-    complete_batch
+    get_model_params_name,
+    complete_batch,
+    add_time_mark_to_file,
+    add_time_mark_to_dir,
+    samples_with_mean_cov,
+    get_reload_hyper
 )
 from .func import (
     make_nd_diag
@@ -27,6 +32,10 @@ __all__ = [
     'plot_train_pred_NoSSMnum',
     'plot_train_epoch_loss',
     'del_previous_model_params',
+    'get_model_params_name',
+    'add_time_mark_to_file',
+    'add_time_mark_to_dir',
+    'samples_with_mean_cov',
     "reload_config",
     "weighted_average",
     "make_nd_diag",
@@ -37,7 +46,8 @@ __all__ = [
     "_broadcast_param",
     "MultivariateGaussian",
     "Gaussian",
-    "erf"
+    "erf",
+    "get_reload_hyper"
 ]
 
 # fix Sphinx issues, see https://bit.ly/2K2eptM

@@ -337,7 +337,7 @@ class LDS(object):
         samples_lat_state = tf.expand_dims(
             state.sample(num_samples)
             ,axis=-1
-        )#(num_sample, bs, 6latent_dim,1)
+        )#(num_sample, bs, latent_dim,1)
         t=0
         samples_seq = tf.TensorArray(size=self.seq_length , dtype=tf.float32)
 

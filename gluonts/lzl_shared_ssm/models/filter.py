@@ -77,7 +77,7 @@ class MultiKalmanFilter(object):
         mask = tf.slice(valueInputs, [0,0, self.dim_z + self.dim_u], [-1,-1, 1])  # (ssm_num , bs, 1)
 
         # Mixture of C
-        C = tf.matmul(alpha, tf.reshape(self.C, [alpha.shape[0],-1, self.dim_z * self.dim_l]))  # (ssm_num ,bs, k) x (ssm_num , k , dim_z_ob*dim_z)
+        C = tf.matmul(alpha, tf.reshape(self.C, [alpha.shape[0],-1, self.dim_z * self.dim_l]))  # (ssm_num ,bs, k) x (ssm_num , k , dim_l*dim_z)
         C = tf.reshape(C, [alpha.shape[0],alpha.shape[1], self.dim_z, self.dim_l])  # (ssm_num , bs, dim_z, dim_l)
 
         # Residual
@@ -320,14 +320,14 @@ class MultiKalmanFilter(object):
         log_p_seq , z_pred_mean = self.get_filter_log_p_seq(mu_pred[:-1], Sigma_pred[:-1], C) #(ssm_num ,bs, seq)
         # TODO: 这里先把 filter 计算的结果赋给 MultiKalmanFilter 的一个属性
         self.log_likelihood =  log_p_seq
-        forward_states = [mu_filt, Sigma_filt] #(seq , ssm_num ,bs , dim_l)  (seq , ssm_num , bs , dim_l , dim_l)
+        forward_states = [mu_pred, Sigma_pred] #(seq , ssm_num ,bs , dim_l)  (seq , ssm_num , bs , dim_l , dim_l)
         # Swap batch dimension and time dimension
         pred_state = [mu_pred[-1] , Sigma_pred[-1]]
         forward_states[0] = tf.transpose(forward_states[0], [1, 2, 0, 3])
         forward_states[1] = tf.transpose(forward_states[1], [1, 2, 0, 3 , 4])
          # tuple(forward_states) , tf.transpose(A, [1, 2, 0, 3, 4]), tf.transpose(B, [1, 2, 0, 3, 4]),
          #  tf.transpose(C, [1, 2, 0, 3, 4]), tf.transpose(alpha, [1, 2, 0, 3])
-        return z_pred_mean , pred_state, alpha[-1], state  , log_p_seq
+        return z_pred_mean , pred_state, alpha[-1], state  , log_p_seq , forward_states
 
     def smooth(self):
         backward_states, A, B, C, alpha = self.compute_backwards(self.compute_forwards())
@@ -403,9 +403,9 @@ class MultiKalmanFilter(object):
 
         :return:
         '''
-        inputs = [tf.transpose(self.u, [2, 0, 1, 3]),
-                  tf.transpose(self.Q, [1, 0, 2, 3]),
-                  tf.transpose(self.R, [1, 0, 2, 3])
+        inputs = [tf.transpose(self.u, [2, 0, 1, 3]), #(pred ,ssm_num, bs, dim_u)
+                  tf.transpose(self.Q, [1, 0, 2, 3]), #(pred ,bs , dim_l ,dim_l)
+                  tf.transpose(self.R, [1, 0, 2, 3]) #(pred ,bs, dim_z , dim_z)
                   ]
         # 用于占位的矩阵 A B C
         dummy_init_z_pred = tf.zeros([self.ssm_num,self.mu.shape[1],self.dim_z])
@@ -420,7 +420,22 @@ class MultiKalmanFilter(object):
                                               dummy_init_z_cov,self.alpha_0, self.state,
                                               dummy_init_A, dummy_init_B, _C),
                                  parallel_iterations=1, name='forward_pred_mode')
-        return forward_states
+        l_t_pred_mean , l_t_pred_cov = self.pred_state_samples(forward_states)
+        _ , _ , z_t_pred_mean, z_t_pred_cov, _, _, _, _, C = forward_states;
+        return l_t_pred_mean , l_t_pred_cov , z_t_pred_mean, z_t_pred_cov
+
+    def pred_state_samples(self, forward_states):
+        '''
+        :param forward_states:
+        l_t|T  , z_t|T , alpha_0 , lstm_state , A , B , C
+        :return:
+        samples from Latent state
+        '''
+        l_t_pred_mean , l_t_pred_cov ,_, _,_ , _ ,_,_, C = forward_states;
+        print(l_t_pred_mean.shape)
+        print(l_t_pred_cov.shape)
+
+        return l_t_pred_mean , l_t_pred_cov
 
 
 
