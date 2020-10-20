@@ -20,10 +20,10 @@ from mxnet import gluon
 
 # First-party imports
 from gluonts.core.component import DType, validated
-from gluonts.distribution.bijection import AffineTransformation
 from gluonts.model.common import Tensor
 
 # Relative imports
+from .bijection import AffineTransformation
 from .distribution import Distribution
 from .transformed_distribution import TransformedDistribution
 
@@ -32,7 +32,6 @@ class ArgProj(gluon.HybridBlock):
     r"""
     A block that can be used to project from a dense layer to distribution
     arguments.
-
     Parameters
     ----------
     dim_args
@@ -50,17 +49,18 @@ class ArgProj(gluon.HybridBlock):
         self,
         args_dim: Dict[str, int],
         domain_map: Callable[..., Tuple[Tensor]],
-        float_type: DType = np.float32,
+        dtype: DType = np.float32,
         prefix: Optional[str] = None,
+        **kwargs,
     ) -> None:
-        super().__init__()
+        super().__init__(**kwargs)
         self.args_dim = args_dim
-        self.float_type = float_type
+        self.dtype = dtype
         self.proj = [
             gluon.nn.Dense(
                 dim,
                 flatten=False,
-                dtype=self.float_type,
+                dtype=self.dtype,
                 prefix=f"{prefix}_distr_{name}_",
             )
             for name, dim in args_dim.items()
@@ -82,12 +82,22 @@ class Output:
     """
 
     args_dim: Dict[str, int]
+    _dtype: DType = np.float32
+
+    @property
+    def dtype(self):
+        return self._dtype
+
+    @dtype.setter
+    def dtype(self, dtype: DType):
+        self._dtype = dtype
 
     def get_args_proj(self, prefix: Optional[str] = None) -> ArgProj:
         return ArgProj(
             args_dim=self.args_dim,
             domain_map=gluon.nn.HybridLambda(self.domain_map),
             prefix=prefix,
+            dtype=self.dtype,
         )
 
     def domain_map(self, F, *args: Tensor):
@@ -106,26 +116,31 @@ class DistributionOutput(Output):
         pass
 
     def distribution(
-        self, distr_args, scale: Optional[Tensor] = None
+        self,
+        distr_args,
+        loc: Optional[Tensor] = None,
+        scale: Optional[Tensor] = None,
     ) -> Distribution:
         r"""
         Construct the associated distribution, given the collection of
         constructor arguments and, optionally, a scale tensor.
-
         Parameters
         ----------
         distr_args
             Constructor arguments for the underlying Distribution type.
+        loc
+            Optional tensor, of the same shape as the
+            batch_shape+event_shape of the resulting distribution.
         scale
             Optional tensor, of the same shape as the
             batch_shape+event_shape of the resulting distribution.
         """
-        if scale is None:
+        if loc is None and scale is None:
             return self.distr_cls(*distr_args)
         else:
             distr = self.distr_cls(*distr_args)
             return TransformedDistribution(
-                distr, [AffineTransformation(scale=scale)]
+                distr, [AffineTransformation(loc=loc, scale=scale)]
             )
 
     @property
@@ -143,6 +158,15 @@ class DistributionOutput(Output):
         of the distributions that this object constructs.
         """
         return len(self.event_shape)
+
+    @property
+    def value_in_support(self) -> float:
+        r"""
+        A float that will have a valid numeric value when computing the
+        log-loss of the corresponding distribution. By default 0.0.
+        This value will be used when padding data series.
+        """
+        return 0.0
 
     def domain_map(self, F, *args: Tensor):
         r"""

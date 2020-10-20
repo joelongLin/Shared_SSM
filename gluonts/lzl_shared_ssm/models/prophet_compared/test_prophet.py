@@ -13,55 +13,61 @@ import pickle
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 import numpy as np
+import argparse
 
-target = 'btc,eth'
-environment = 'gold'
-start = '2018-08-02'
-freq = '1D'
-timestep = 503
-pred = 5
-past = 90
-slice = 'overlap'
+parser = argparse.ArgumentParser(description="prophet")
+parser.add_argument('-t' ,'--target' , type=str , help='target series', default='btc,eth')
+parser.add_argument('-st','--start', type=str, help='start time of the dataset',default='2018-08-02')
+parser.add_argument('-f'  ,'--freq' , type = str , help = 'frequency of dataset' , default='1D')
+parser.add_argument('-T','--timestep', type=int, help='length of the dataset', default=637)
+parser.add_argument('-pr'  ,'--pred' , type = int , help = 'length of prediction range' , default=5)
+parser.add_argument('-pa'  ,'--past' , type = int , help = 'length of training range' , default=30)
+parser.add_argument('-s'  ,'--slice' , type = str , help = 'type of sliding dataset' , default='nolap')
+args = parser.parse_args()
+
+target = args.target
+start = args.start
+freq = args.freq
+timestep = args.timestep
+pred = args.pred
+past = args.past
+slice_style = args.slice
 ds_name_prefix = 'data_process/processed_data/{}_{}_{}_{}.pkl'
-# train_log_save_path = 'logs/btc_eth(prophet)/pred_pic_{}_past({})_pred({})'.format(slice, past, pred)
+
 result_params = '_'.join([
                                 'freq(%s)'%(freq),
                                'past(%d)'%(past)
                                 ,'pred(%d)'%(pred)
                              ]
                         )
-# if not os.path.exists(train_log_save_path):
-#     os.makedirs(train_log_save_path)
-# quantiles = [0.05 , 0.25 , 0.5 , 0.75 , 0.95]
-# def alpha_for_percentile(p):
-#     return (p / 100.0) ** 0.3
+
 
 if __name__ == '__main__':
-    # 导入 target 以及 environment 的数据
-    if slice == 'overlap':
+    # 导入 target 
+    if slice_style == 'overlap':
         series = timestep - past - pred + 1
         print('每个数据集的序列数量为 ', series)
-    elif slice == 'nolap':
+    elif slice_style == 'nolap':
         series = timestep // (past + pred)
         print('每个数据集的序列数量为 ', series)
     else:
         series = 1
         print('每个数据集的序列数量为 ', series ,'情景为长单序列')
-    result_root_path  = 'evaluate/results/{}_slice({})_past({})_pred({})'.format(target.replace(',' ,'_') , slice ,past , pred)
+    result_root_path  = 'evaluate/results/{}_length({})_slice({})_past({})_pred({})'.format(target.replace(',' ,'_'), timestep , slice_style ,past , pred)
     if not os.path.exists(result_root_path):
         os.makedirs(result_root_path)
-    forecast_result_saved_path = os.path.join(result_root_path,'prophet(%s)_' % (target.replace(',' ,'_')) + result_params + '.pkl')
+    forecast_result_saved_path = os.path.join(result_root_path,'prophet_'  + result_params + '.pkl')
     forecast_result_saved_path = add_time_mark_to_file(forecast_result_saved_path)
 
     # 目标序列的数据路径
     target_path = {ds_name: ds_name_prefix.format(
-        '%s_start(%s)_freq(%s)' % (ds_name, start,freq), '%s_DsSeries_%d' % (slice, series),
+        '%s_start(%s)_freq(%s)' % (ds_name, start,freq), '%s_DsSeries_%d' % (slice_style, series),
         'train_%d' % past, 'pred_%d' % pred
     ) for ds_name in target.split(',')}
 
     create_dataset_if_not_exist(
         paths=target_path, start=start, past_length=past
-        , pred_length=pred, slice=slice
+        , pred_length=pred, slice=slice_style
         , timestep=timestep, freq=freq
     )
 
@@ -70,20 +76,19 @@ if __name__ == '__main__':
         # 由于 target 应该都是 dim = 1 只是确定有多少个 SSM 而已
         for target_name in target_path:
             target = target_path[target_name]
-            print('导入原始数据成功~~~')
+            print('导入数据 : {}'.format(target))
             with open(target, 'rb') as fp:
                 target_ds = pickle.load(fp)
                 assert target_ds.metadata['dim'] == 1, 'target 序列的维度都应该为1'
-                target_data = target_ds
-
+                
                 prophet_predictor = ProphetPredictor(freq=freq, prediction_length=pred)
-                generators = prophet_predictor.predict(target_data.train)
+                generators = prophet_predictor.predict(target_ds.train)
                 forecast_samples = list(generators)
                 sorted_samples = np.concatenate([np.expand_dims(sample._sorted_samples, 0) for sample in forecast_samples], axis=0)
                 sorted_samples = np.expand_dims(sorted_samples, axis=0)
                 sample_forecasts.append(sorted_samples)
 
-        sample_forecasts = np.concatenate(sample_forecasts, axis=0)
+        sample_forecasts = np.concatenate(sample_forecasts, axis=0)#(ssm_num , bs , num_samples, 1)
         print('把预测结果保存在-->', forecast_result_saved_path)
         with open(forecast_result_saved_path , 'wb') as fp:
             pickle.dump(sample_forecasts , fp)

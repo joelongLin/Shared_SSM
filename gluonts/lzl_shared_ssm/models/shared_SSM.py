@@ -415,7 +415,7 @@ class SharedSSM(object):
                                           C=self.init_vars['C'],  # Measurement function
                                           R=train_R,  # measurement noise
                                           Q=train_Q,  # process noise
-                                          z=train_target_norm,  # output 其实
+                                          z=train_target_norm,  # output
                                           u = train_u,
                                           # mask 这里面会多一维度 (bs,seq , ssm_num ,1)
                                           mask=self.placeholders['past_target_observed'],
@@ -683,15 +683,28 @@ class SharedSSM(object):
             finally:
                 print('whatever ! life is still fantastic !')
 
-        eval_result_root_path = 'evaluate/results/{}_slice({})_past({})_pred({})'.format(self.config.target.replace(',' ,'_') , self.config.slice ,self.config.past_length , self.config.pred_length)
-        model_result = []; ground_truth_result =[];
-
+        #存放预测结果的容器
+        eval_result_root_path = 'evaluate/results/{}_length({})_slice({})_past({})_pred({})'.format(
+            self.config.target.replace(',' ,'_'), self.config.timestep , self.config.slice ,self.config.past_length , self.config.pred_length)
         if not os.path.exists(eval_result_root_path):
             os.makedirs(eval_result_root_path)
+        model_result = []; ground_truth_result =[];
+
+        #存放隐状态和background结果的容器
+        eval_analysis_root_path = 'evaluate/analysis/{}_length({})_slice({})_past({})_pred({})'.format(
+            self.config.target.replace(',' ,'_') ,self.config.timestep , self.config.slice ,self.config.past_length , self.config.pred_length)
+        if not os.path.exists(eval_analysis_root_path):
+            os.makedirs(eval_analysis_root_path)
+        prediction_analysis = {'l_mean':[] , 'l_cov':[] ,'control':[] ,'ground_truth':[] ,'z_mean_scaled':[]}
+        
+
+        
+        
+        # 设置 文件预测结果 的文件名
         if self.config.use_env:
-            result_prefix = 'shared_ssm(%s)_'%(self.config.target)
+            result_prefix = 'shared_ssm_'
         else:
-            result_prefix = 'shared_ssm_without_env(%s)_' % (self.config.target)
+            result_prefix = 'without_env_' 
         model_result_path = os.path.join(eval_result_root_path,'{}.pkl'.format(
             result_prefix
             + (self.train_log_path.split('/')[-1] if hasattr(self, 'train_log_path') else self.config.reload_model)
@@ -699,12 +712,12 @@ class SharedSSM(object):
         ))
         model_result_path = add_time_mark_to_file(model_result_path)
         print('结果保存在-->',model_result_path)
-        # 把处理完的数据放到 evaluate/results 里面
-        ground_truth_path = os.path.join(eval_result_root_path,'{}.pkl'.format(
-                'ground_truth(%s)_start(%s)_freq(%s)_past(%d)_pred(%d)'
-                %(self.config.target, self.config.start , self.config.freq
+        # 设置 ground truth 的地址
+        ground_truth_path = os.path.join(eval_result_root_path,
+                'ground_truth_start({})_freq({})_past({})_pred({}).pkl'.format(
+                self.config.start , self.config.freq
                   , self.config.past_length , self.config.pred_length)
-            )
+            
         )
         print('ground_truth的保存的地方：' ,ground_truth_path)
 
@@ -715,11 +728,11 @@ class SharedSSM(object):
                 enumerate(self.env_test_loader , start = 1)
         ):
             batch_no = target_batch[0]
-            print('当前做Inference的第{}个batch的内容'.format(batch_no))
+            print('当前做prediction的是第{}个batch的内容'.format(batch_no))
             target_batch_input = target_batch[1]
             env_batch_input = env_batch[1]
             if target_batch_input != None and env_batch_input != None:
-                # 主要是为了能够获取时间的信息
+                # 不重复收集
                 if not os.path.exists(ground_truth_path):
                     ground_truth_result.append(target_batch_input)
 
@@ -743,11 +756,23 @@ class SharedSSM(object):
                 # 这个部分只是为了方便画图，所以才把训练时候的结果也运行出来
                 batch_train_z, z_scale = sess.run([self.train_z_mean[:,:bs], self.target_scale[:,:bs]], feed_dict=feed_dict)
                 batch_pred_l_mean , batch_pred_l_cov , batch_pred_u = sess.run(
-                    [self.pred_l_mean , self.pred_l_cov , self.pred_u] , feed_dict = feed_dict
+                    [self.pred_l_mean[:,:,:bs] , self.pred_l_cov[:,:,:bs] , self.pred_u[:,:bs]] , feed_dict = feed_dict
                 )
                 batch_pred_z_mean_scaled, batch_pred_z_cov  = sess.run(
                     [self.pred_z_mean_scaled[:,:bs] , self.pred_z_cov[:,:bs] ], feed_dict=feed_dict
                 )
+
+                # we put the result intput the analysis collection
+                prediction_analysis['l_mean'].append(
+                    np.transpose(batch_pred_l_mean ,[1,2,0,3])
+                ) #(ssm, bs, seq , dim_l)
+                prediction_analysis['l_cov'].append(
+                    np.transpose(batch_pred_l_cov , [1,2,0,3,4])
+                )
+                prediction_analysis['control'].append(batch_pred_u)#(ssm, bs, seq, dim_u)
+                ground_truth_scaled = np.divide(target_batch_complete['future_target'][:,:bs], np.expand_dims(z_scale , axis=2))
+                prediction_analysis['ground_truth'].append(ground_truth_scaled)
+                prediction_analysis['z_mean_scaled'].append(batch_pred_z_mean_scaled)
 
                 # 以下两个变量主要用于绘图
                 # batch_ground_truth = np.concatenate(
@@ -770,69 +795,44 @@ class SharedSSM(object):
                 #                 time_start=target_batch_complete['start'],freq=self.config.freq
                 # )
 
-                if self.config.num_samples == 1:
-                    mean_pred = np.concatenate(
-                        [batch_train_z , np.multiply(batch_pred_z_mean_scaled, np.expand_dims(z_scale , axis=2))]
-                        , axis=2
-                    )
-                    model_result.append(mean_pred)
-                else:
-                    scale = np.expand_dims(z_scale,axis=2)#(ssm_num ,bs , dim_z) --> #(ssm_num ,bs , 1 , dim_z)
-                    batch_pred_z_mean = np.multiply(scale , batch_pred_z_mean_scaled)
-                    pred_samples = samples_with_mean_cov(batch_pred_z_mean , batch_pred_z_cov , self.config.num_samples)
-                    # pred_samples = np.multiply(scale , pred_samples_scale)
-                    model_result.append(pred_samples)
-                    pass
+                 # TODO: 2020/10/12 暂时不存储，要取结果进行分析
+                # if self.config.num_samples == 1:
+                #     mean_pred = np.concatenate(
+                #         [batch_train_z , np.multiply(batch_pred_z_mean_scaled, np.expand_dims(z_scale , axis=2))]
+                #         , axis=2
+                #     )
+                #     model_result.append(mean_pred)
+                # else:
+                #     scale = np.expand_dims(z_scale,axis=2)#(ssm_num ,bs , dim_z) --> #(ssm_num ,bs , 1 , dim_z)
+                #     batch_pred_z_mean = np.multiply(scale , batch_pred_z_mean_scaled)
+                #     pred_samples = samples_with_mean_cov(batch_pred_z_mean , batch_pred_z_cov , self.config.num_samples)
+                #     # pred_samples = np.multiply(scale , pred_samples_scale)
+                #     model_result.append(pred_samples)
+                #     pass
 
+        #处理分析结果，指定目录
+        for name , item in prediction_analysis.items():
+            item = np.concatenate(item , axis=1)
+            prediction_analysis[name] = item
+        model_analysis_path = os.path.join(eval_analysis_root_path , 'seq({})_dim_l({})_dim_u({})_lag({}){}.pkl'.format(
+            self.config.pred_length ,self.config.dim_l , self.config.dim_u ,self.config.maxlags, '' if self.config.reload_time == '' else '_time({})'.format(self.config.reload_time)
+            )
+        )
+        model_analysis_path = add_time_mark_to_file(model_analysis_path)
+        with open(model_analysis_path , 'wb') as fp:
+            pickle.dump(prediction_analysis, fp)
+        
+        
+        
 
-
-        model_result = np.concatenate(model_result, axis=1) #(ssm_num ,bs, seq,num_samples,1)
-        with open(model_result_path , 'wb') as fp:
-            pickle.dump(model_result , fp)
-        if not os.path.exists(ground_truth_path):
-            with open(ground_truth_path , 'wb') as fp:
-                pickle.dump(ground_truth_result ,fp)
+        # 处理的是预测的结果
+        # TODO: 2020/10/12 暂时不存储，要取结果进行分析
+        # model_result = np.concatenate(model_result, axis=1) #(ssm_num ,bs, seq,num_samples,1)
+        # with open(model_result_path , 'wb') as fp:
+        #     pickle.dump(model_result , fp)
+        # if not os.path.exists(ground_truth_path):
+        #     with open(ground_truth_path , 'wb') as fp:
+        #         pickle.dump(ground_truth_result ,fp)
 
         return self
 
-
-    def evaluate(self, forecast=None):
-        pass
-
-
-
-# prophet_compared code
-'''
-# 做training 时
-print('\n----- training数据集 ------')
-for batch_no, batch_data in enumerate(self.target_train_loader, start=1):
-    if batch_data != None and batch_no <= self.config.num_batches_per_epoch:
-        print('第{}个batch的内容init_time:{}  , past_target: {}  , past_time : {} , past_observed :{} ,'.format(
-            batch_no,
-            batch_data[INIT_TIME].shape,
-            batch_data['past_target'].shape,
-            batch_data['past_time_feat'].shape,
-            batch_data['past_%s' % (FieldName.OBSERVED_VALUES)].shape
-        ))
-    else:
-        print('第', batch_no, '内容为空')
-        break
-# 做inference 时
-print('\n----- inference数据集 ------')
-for batch_no, batch_data in enumerate(self.target_test_loader, start=1):
-    if batch_data != None and batch_no <= self.config.num_batches_per_epoch:
-        print('第{}个batch的内容init_time:{}  , past_target: {} , future_target: {} '
-              ', past_time : {} , future_time : {}'
-              ', past_observed : {} , future_observed : {}'.format(
-            batch_no,
-            batch_data[INIT_TIME].shape,
-            batch_data['past_target'].shape, batch_data['future_target'].shape,
-            batch_data['past_time_feat'].shape, batch_data['future_time_feat'].shape,
-            batch_data['past_%s' % (FieldName.OBSERVED_VALUES)].shape,
-            batch_data['future_%s' % (FieldName.OBSERVED_VALUES)].shape
-        ))
-    else:
-        print('第', batch_no, '内容为空')
-        break
-exit()
-'''

@@ -1,6 +1,9 @@
 # -*- coding: UTF-8 -*-
 # author : joelonglin
 import os
+# os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+os.environ["CUDA_VISIBLE_DEVICES"] = '0'
+# use the gluonts src code in our module
 import sys
 sys.path.insert(0,os.getcwd())
 if ('/lzl_shared_ssm' not in os.getcwd()):
@@ -13,12 +16,11 @@ import tensorflow as tf
 tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 
 
-
 cl = tf.app.flags
-reload_model = 'freq(1D)_env(gold)_lags(5)_past(90)_pred(5)_u(5)_l(4)_K(2)_T(2-40)_E(2-50)_α(50)_epoch(100)_bs(32)_bn(13)_lr(0.001)_initKF(0.05)_dropout(0.5)'
+reload_model = ''
 cl.DEFINE_string('logs_dir','logs/btc_eth(shared_ssm)','file to print log')
 cl.DEFINE_string('reload_model' ,reload_model,'models to reload')
-cl.DEFINE_string('reload_time' , '' , 'time marker of the reload model')
+cl.DEFINE_string('reload_time' , '5' , 'time marker of the reload model')
 
 
 # dataset configuration
@@ -37,7 +39,6 @@ cl.DEFINE_integer('epochs' , 100 , 'Number of epochs that the network will train
 cl.DEFINE_bool('shuffle' , False ,'whether to shuffle the train dataset')
 cl.DEFINE_integer('batch_size' ,  10 , 'Numbere of examples in each batch')
 cl.DEFINE_integer('num_batches_per_epoch' , 2 , 'Numbers of batches at each epoch')
-cl.DEFINE_string('gpu' , '3' , 'gpu to use')
 cl.DEFINE_float('dropout_rate' , 0.5 , 'Dropout regularization parameter (default: 0.1)')
 cl.DEFINE_float('learning_rate' , 0.001 , 'Initial learning rate')
 
@@ -79,7 +80,6 @@ cl.DEFINE_integer('num_samples', '1', 'Number of samples paths to draw when comp
 
 def main(_):
     config = cl.FLAGS
-    os.environ["CUDA_VISIBLE_DEVICES"] = config.gpu
     if config.reload_model != '':
         print('reload model : ' , config.reload_model)
         config = get_reload_hyper(config.reload_model , config)

@@ -112,6 +112,12 @@ class HybridContext:
     def __exit__(self, *args):
         self.net.hybridize(active=self.original_mode, **self.kwargs)
 
+def maybe_len(obj) -> Optional[int]:
+    try:
+        return len(obj)
+    except NotImplementedError:
+        return None
+
 
 def copy_parameters(
     net_source: mx.gluon.Block,

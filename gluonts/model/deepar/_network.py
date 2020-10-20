@@ -11,19 +11,22 @@
 # express or implied. See the License for the specific language governing
 # permissions and limitations under the License.
 
-# Standard library imports
 from typing import List, Optional, Tuple
 
 # Third-party imports
 import mxnet as mx
 
+# Standard library imports
+import numpy as np
+
+from gluonts.core.component import DType, validated
+from gluonts.model.common import Tensor
+
 # First-party imports
 from gluonts.block.feature import FeatureEmbedder
 from gluonts.block.scaler import MeanScaler, NOPScaler
-from gluonts.core.component import validated
-from gluonts.distribution import DistributionOutput, Distribution
+from gluonts.distribution import Distribution, DistributionOutput
 from gluonts.distribution.distribution import getF
-from gluonts.model.common import Tensor
 from gluonts.support.util import weighted_average
 
 
@@ -47,9 +50,10 @@ class DeepARNetwork(mx.gluon.HybridBlock):
         distr_output: DistributionOutput,
         dropout_rate: float,
         cardinality: List[int],
-        embedding_dimension: int,
+        embedding_dimension: List[int],
         lags_seq: List[int],
         scaling: bool = True,
+        dtype: DType = np.float32,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -64,6 +68,11 @@ class DeepARNetwork(mx.gluon.HybridBlock):
         self.embedding_dimension = embedding_dimension
         self.num_cat = len(cardinality)
         self.scaling = scaling
+        self.dtype = dtype
+
+        assert len(cardinality) == len(
+            embedding_dimension
+        ), "embedding_dimension should be a list with the same size as cardinality"
 
         assert len(set(lags_seq)) == len(
             lags_seq
@@ -96,9 +105,11 @@ class DeepARNetwork(mx.gluon.HybridBlock):
                     else cell
                 )
                 self.rnn.add(cell)
+            self.rnn.cast(dtype=dtype)
             self.embedder = FeatureEmbedder(
                 cardinalities=cardinality,
-                embedding_dims=[embedding_dimension for _ in cardinality],
+                embedding_dims=embedding_dimension,
+                dtype=self.dtype,
             )
             if scaling:
                 self.scaler = MeanScaler(keepdims=True)
@@ -154,17 +165,6 @@ class DeepARNetwork(mx.gluon.HybridBlock):
 
         return F.stack(*lagged_values, axis=-1)
 
-    @staticmethod
-    def weighted_average(
-        F, tensor: Tensor, weights: Optional[Tensor] = None, axis=None
-    ):
-        if weights is not None:
-            weighted_tensor = tensor * weights
-            sum_weights = F.maximum(1.0, weights.sum(axis=axis))
-            return weighted_tensor.sum(axis=axis) / sum_weights
-        else:
-            return tensor.mean(axis=axis)
-
     def unroll_encoder(
         self,
         F,
@@ -198,6 +198,7 @@ class DeepARNetwork(mx.gluon.HybridBlock):
             sequence_length = self.history_length
             subsequences_length = self.context_length
         else:
+            #(N , past+pred , time_feat)
             time_feat = F.concat(
                 past_time_feat.slice_axis(
                     axis=1,
@@ -207,6 +208,7 @@ class DeepARNetwork(mx.gluon.HybridBlock):
                 future_time_feat,
                 dim=1,
             )
+            #(N , past+pred , 1)
             sequence = F.concat(past_target, future_target, dim=1)
             sequence_length = self.history_length + self.prediction_length
             subsequences_length = self.context_length + self.prediction_length
@@ -274,6 +276,13 @@ class DeepARNetwork(mx.gluon.HybridBlock):
             length=subsequences_length,
             layout="NTC",
             merge_outputs=True,
+            begin_state=self.rnn.begin_state(
+                func=F.zeros,
+                dtype=self.dtype,
+                batch_size=inputs.shape[0]
+                if isinstance(inputs, mx.nd.NDArray)
+                else 0,
+            ),
         )
 
         # outputs: (batch_size, seq_len, num_cells)
@@ -296,17 +305,13 @@ class DeepARTrainingNetwork(DeepARNetwork):
         future_observed_values: Tensor,
     ) -> Distribution:
         """
-
         Returns the distribution predicted by the model on the range of
         past_target and future_target.
-
         The distribution is obtained by unrolling the network with the true
         target, this is also the distribution that is being minimized during
         training. This can be used in anomaly detection, see for instance
         examples/anomaly_detection.py.
-
         Input arguments are the same as for the hybrid_forward method.
-
         Returns
         -------
         Distribution
@@ -348,7 +353,6 @@ class DeepARTrainingNetwork(DeepARNetwork):
         """
         Computes the loss for training DeepAR, all inputs tensors representing
         time series have NTC layout.
-
         Parameters
         ----------
         F
@@ -360,10 +364,8 @@ class DeepARTrainingNetwork(DeepARNetwork):
         future_time_feat : (batch_size, prediction_length, num_features)
         future_target : (batch_size, prediction_length, *target_shape)
         future_observed_values : (batch_size, prediction_length, *target_shape)
-
         Returns loss with shape (batch_size, context + prediction_length, 1)
         -------
-
         """
 
         distr = self.distribution(
@@ -415,6 +417,9 @@ class DeepARTrainingNetwork(DeepARNetwork):
             F=F, x=loss, weights=loss_weights, axis=1
         )
 
+        # need to mask possible nans and -inf
+        loss = F.where(condition=loss_weights, x=loss, y=F.zeros_like(loss))
+
         return weighted_loss, loss
 
 
@@ -440,7 +445,6 @@ class DeepARPredictionNetwork(DeepARNetwork):
         """
         Computes sample paths by unrolling the LSTM starting with a initial
         input and state.
-
         Parameters
         ----------
         static_feat : Tensor
@@ -530,7 +534,7 @@ class DeepARPredictionNetwork(DeepARNetwork):
             )
 
             # (batch_size * num_samples, 1, *target_shape)
-            new_samples = distr.sample()
+            new_samples = distr.sample(dtype=self.dtype)
 
             # (batch_size * num_samples, seq_len, *target_shape)
             repeated_past_target = F.concat(
@@ -572,7 +576,6 @@ class DeepARPredictionNetwork(DeepARNetwork):
         past_target : (batch_size, history_length, *target_shape)
         past_observed_values : (batch_size, history_length, *target_shape)
         future_time_feat : (batch_size, prediction_length, num_features)
-
         Returns
         -------
         Tensor

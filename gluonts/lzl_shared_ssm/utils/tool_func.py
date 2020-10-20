@@ -1,6 +1,5 @@
 from gluonts.dataset.util import to_pandas
 import logging
-import tensorflow as tf
 import pandas as pd
 import matplotlib
 matplotlib.use('Agg')
@@ -127,7 +126,7 @@ def weighted_average(
     weights  #(ssm_num , bs , seq_length)
     axis   metrics中需要加权的
     """
-
+    import tensorflow as tf
     if weights is not None:
         weighted_tensor = metrics * weights
         sum_weights = tf.math.maximum(1.0, tf.math.reduce_sum(weights,axis=axis))

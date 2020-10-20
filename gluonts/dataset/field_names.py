@@ -28,6 +28,8 @@ class FieldName:
     FEAT_DYNAMIC_CAT = "feat_dynamic_cat"
     FEAT_DYNAMIC_REAL = "feat_dynamic_real"
 
+    FEAT_DYNAMIC = "feat_dynamic"
+
     FEAT_TIME = "time_feat"
     FEAT_CONST = "feat_dynamic_const"
     FEAT_AGE = "feat_dynamic_age"
@@ -35,3 +37,5 @@ class FieldName:
     OBSERVED_VALUES = "observed_values"
     IS_PAD = "is_pad"
     FORECAST_START = "forecast_start"
+
+    TARGET_DIM_INDICATOR = "target_dimension_indicator"

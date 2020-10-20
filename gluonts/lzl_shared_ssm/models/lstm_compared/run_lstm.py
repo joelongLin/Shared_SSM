@@ -1,12 +1,13 @@
 # -*- utf-8 -*-
 # author : joelonglin
 
-
+import sys
 import tensorflow as tf
 tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
-import sys
+os.environ["CUDA_VISIBLE_DEVICES"] = '1'
+import warnings
+warnings.filterwarnings('ignore')
 
 cl = tf.app.flags
 # reload_model =  'logs/btc_eth/Dec_25_17:27:07_2019'
@@ -18,8 +19,8 @@ cl.DEFINE_string('logs_dir','logs/btc_eth(common_lstm)','file to print log')
 #train configuration
 cl.DEFINE_integer('epochs' , 100 , 'Number of epochs that the network will train (default: 1).')
 cl.DEFINE_bool('shuffle' , False ,'whether to shuffle the train dataset')
-cl.DEFINE_integer('batch_size' ,  32 , 'Numbere of examples in each batch')
-cl.DEFINE_integer('num_batches_per_epoch' , 13 , 'Numbers of batches at each epoch')
+cl.DEFINE_integer('batch_size' ,  2 , 'Numbere of examples in each batch')
+cl.DEFINE_integer('num_batches_per_epoch' , 10 , 'Numbers of batches at each epoch')
 cl.DEFINE_float('learning_rate' , 0.001 , 'Initial learning rate')
 
 # network configuration
@@ -35,11 +36,11 @@ cl.DEFINE_float('dropout_rate' , 0.5 , 'Dropout regularization parameter (defaul
 cl.DEFINE_string('target' , 'btc,eth' , 'Name of the target dataset')
 cl.DEFINE_string('environment' , 'gold' , 'Name of the dataset ')
 cl.DEFINE_string('start' , '2018-08-02' ,'time start of the dataset')
-cl.DEFINE_integer('timestep' , 503 , 'length of the series') #这个序列的长度实际上也决定了样本数量的大小
-cl.DEFINE_string('slice' , 'overlap' , 'how to slice the dataset')
+cl.DEFINE_integer('timestep' , 637 , 'length of the series') #这个序列的长度实际上也决定了样本数量的大小
+cl.DEFINE_string('slice' , 'nolap' , 'how to slice the dataset')
 cl.DEFINE_string('freq','1D','Frequency of the data to train on and predict')
-cl.DEFINE_integer('past_length' ,90,'This is the length of the training time series')
-cl.DEFINE_integer('pred_length' , 5 , 'Length of the prediction horizon')
+cl.DEFINE_integer('past_length' ,30,'This is the length of the training time series')
+cl.DEFINE_integer('pred_length' , 1 , 'Length of the prediction horizon')
 
 
 
@@ -50,13 +51,6 @@ def main(_):
          print('change os dir : ',os.getcwd())
     config = cl.FLAGS
     print('reload models : ' , config.reload_model)
-    # for i in config:
-    #     try:
-    #         print(i , ':' , eval('config.{}'.format(i)))
-    #     except:
-    #         print('当前 ' , i ,' 属性获取有问题')
-    #         continue
-    # exit()
     from gluonts.lzl_shared_ssm.models.lstm_compared.model import Common_LSTM
     configuration = tf.compat.v1.ConfigProto()
     configuration.gpu_options.allow_growth = True
@@ -65,9 +59,17 @@ def main(_):
             .build_module().build_train_forward().build_predict_forward().initialize_variables()
         dssm.train()
         dssm.predict()
-        # dssm.evaluate()
 
 
 
 if __name__ == '__main__':
    tf.app.run()
+
+
+# for i in config:
+#     try:
+#         print(i , ':' , eval('config.{}'.format(i)))
+#     except:
+#         print('当前 ' , i ,' 属性获取有问题')
+#         continue
+# exit()

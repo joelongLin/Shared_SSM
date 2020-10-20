@@ -429,13 +429,14 @@ class Common_LSTM(object):
             finally:
                 print('whatever ! life is still fantastic !')
 
-        eval_result_root_path = 'evaluate/results/{}_slice({})_past({})_pred({})'.format(self.config.target.replace(',' ,'_') , self.config.slice ,self.config.past_length , self.config.pred_length)
+        eval_result_root_path = 'evaluate/results/{}_length({})_slice({})_past({})_pred({})'.format(
+            self.config.target.replace(',' ,'_'), self.config.timestep , self.config.slice ,self.config.past_length , self.config.pred_length)
         model_result = [];
 
         if not os.path.exists(eval_result_root_path):
             os.makedirs(eval_result_root_path)
         model_result_path = os.path.join(eval_result_root_path, '{}.pkl'.format(
-            'common_lstm(%s)_' % (self.config.target)
+            'common_lstm_'
             + (self.train_log_path.split('/')[-1] if hasattr(self, 'train_log_path') else self.config.reload_model)
         ))
         model_result_path = add_time_mark_to_file(model_result_path)

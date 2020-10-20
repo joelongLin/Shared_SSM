@@ -4,6 +4,7 @@ import numpy as np
 import random
 
 
+
 # Standard library imports
 import itertools
 from collections import defaultdict
@@ -22,6 +23,14 @@ def _past(ts_field):
     return f"past_{ts_field}"
 def _future(ts_field):
     return f"future_{ts_field}"
+def _stack(value1 , value2 , dim):
+    assert abs(len(value1.shape) - len(value2.shape)) <= 1 , "两者维度差距过大"
+    if len(value1.shape) == len(value2.shape):
+        return np.stack([value1, value2],axis=dim)
+    elif len(value1.shape) > len(value2.shape):
+        return np.concatenate([value1 , np.expand_dims(value2,axis=dim)] , axis=dim)
+    else:
+        return _stack(value2 ,value1 ,dim)
 
 class BatchBuffer_NoMX:
     '''
@@ -114,25 +123,32 @@ def stackIterOut(
     flag = True
     while flag:
         batch = {}
+
+ 
         for iter in loaders:
+            
+            
             try:
                 i_batch = next(iter)
+                
                 if len(batch) == 0:
-                    batch = i_batch.copy()
+                    batch = i_batch.copy()                      
                 else:
                     for name in fields:
                         _name = _past(name)
-                        batch[_name] = np.stack((batch[_name], i_batch[_name]), axis=dim)
+                        # expand dim to stack tensor
+                        batch[_name] = _stack(batch[_name], i_batch[_name], dim=dim) 
                         if include_future:
                             _name = _future(name)
-                            batch[_name] = np.stack((batch[_name], i_batch[_name]), axis=dim)
-            except Exception:
+                            batch[_name] = _stack(batch[_name], i_batch[_name], dim=dim)
+            except Exception:       
                 flag = False
                 batch = None
                 break
             finally:
                 pass
         yield batch
+
 
 class DataLoader_NoMX(Iterable[DataEntry]):
     """

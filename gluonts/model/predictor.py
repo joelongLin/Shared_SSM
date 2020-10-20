@@ -14,6 +14,7 @@
 # Standard library imports
 import functools
 import itertools
+import json
 import logging
 import multiprocessing as mp
 import sys
@@ -23,15 +24,15 @@ from pydoc import locate
 from tempfile import TemporaryDirectory
 from typing import (
     TYPE_CHECKING,
-    Tuple,
-    Union,
     Any,
     Callable,
     Dict,
     Iterator,
     List,
     Optional,
+    Tuple,
     Type,
+    Union,
 )
 
 # Third-party imports
@@ -40,7 +41,6 @@ import numpy as np
 
 # First-party imports
 import gluonts
-from gluonts.distribution import Distribution, DistributionOutput
 from gluonts.core.component import (
     DType,
     equals,
@@ -51,10 +51,9 @@ from gluonts.core.component import (
 from gluonts.core.exception import GluonTSException
 from gluonts.core.serde import dump_json, fqname_for, load_json
 from gluonts.dataset.common import DataEntry, Dataset, ListDataset
-from .forecast_generator import ForecastGenerator, SampleForecastGenerator
 from gluonts.dataset.loader import DataBatch, InferenceDataLoader
 from gluonts.model.forecast import Forecast
-
+from gluonts.distribution import Distribution, DistributionOutput
 from gluonts.support.util import (
     export_repr_block,
     export_symb_block,
@@ -64,6 +63,8 @@ from gluonts.support.util import (
     import_symb_block,
 )
 from gluonts.transform import Transformation
+
+from .forecast_generator import ForecastGenerator, SampleForecastGenerator
 
 if TYPE_CHECKING:  # avoid circular import
     from gluonts.model.estimator import Estimator  # noqa
@@ -75,7 +76,6 @@ OutputTransform = Callable[[DataEntry, np.ndarray], np.ndarray]
 class Predictor:
     """
     Abstract class representing predictor objects.
-
     Parameters
     ----------
     prediction_length
@@ -86,25 +86,27 @@ class Predictor:
 
     __version__: str = gluonts.__version__
 
-    def __init__(self, prediction_length: int, freq: str) -> None:
+    def __init__(
+        self, prediction_length: int, freq: str, lead_time: int = 0
+    ) -> None:
         assert (
             prediction_length > 0
         ), "The value of `prediction_length` should be > 0"
+        assert lead_time >= 0, "The value of `lead_time` should be >= 0"
 
         self.prediction_length = prediction_length
         self.freq = freq
+        self.lead_time = lead_time
 
     def predict(self, dataset: Dataset, **kwargs) -> Iterator[Forecast]:
         """
         Compute forecasts for the time series in the provided dataset.
         This method is not implemented in this abstract class; please
         use one of the subclasses.
-
         Parameters
         ----------
         dataset
             The dataset containing the time series to predict.
-
         Returns
         -------
         Iterator[Forecast]
@@ -117,6 +119,10 @@ class Predictor:
         # serialize Predictor type
         with (path / "type.txt").open("w") as fp:
             fp.write(fqname_for(self.__class__))
+        with (path / "version.json").open("w") as fp:
+            json.dump(
+                {"model": self.__version__, "gluonts": gluonts.__version__}, fp
+            )
 
     @classmethod
     def deserialize(
@@ -124,7 +130,6 @@ class Predictor:
     ) -> "Predictor":
         """
         Load a serialized predictor from the given path
-
         Parameters
         ----------
         path
@@ -151,6 +156,18 @@ class Predictor:
     def from_hyperparameters(cls, **hyperparameters):
         return from_hyperparameters(cls, **hyperparameters)
 
+    @classmethod
+    def derive_auto_fields(cls, train_iter):
+        return {}
+
+    @classmethod
+    def from_inputs(cls, train_iter, **params):
+        # auto_params usually include `use_feat_dynamic_real`, `use_feat_static_cat` and `cardinality`
+        auto_params = cls.derive_auto_fields(train_iter)
+        # user specified 'params' will take precedence:
+        params = {**auto_params, **params}
+        return cls.from_hyperparameters(**params)
+
 
 class RepresentablePredictor(Predictor):
     """
@@ -158,7 +175,6 @@ class RepresentablePredictor(Predictor):
     on Gluon. Subclasses should have @validated() constructors.
     (De)serialization and value equality are all implemented on top of the
     @validated() logic.
-
     Parameters
     ----------
     prediction_length
@@ -168,8 +184,12 @@ class RepresentablePredictor(Predictor):
     """
 
     @validated()
-    def __init__(self, prediction_length: int, freq: str) -> None:
-        super().__init__(prediction_length, freq)
+    def __init__(
+        self, prediction_length: int, freq: str, lead_time: int = 0
+    ) -> None:
+        super().__init__(
+            freq=freq, lead_time=lead_time, prediction_length=prediction_length
+        )
 
     def predict(self, dataset: Dataset, **kwargs) -> Iterator[Forecast]:
         for item in dataset:
@@ -202,7 +222,6 @@ class RepresentablePredictor(Predictor):
 class GluonPredictor(Predictor):
     """
     Base predictor type for Gluon-based models.
-
     Parameters
     ----------
     input_names
@@ -222,7 +241,7 @@ class GluonPredictor(Predictor):
     ctx
         MXNet context to use for computation
     forecast_generator
-        Class to generate forecasts from network ouputs
+        Class to generate forecasts from network outputs
     """
 
     BlockType = mx.gluon.Block
@@ -236,11 +255,16 @@ class GluonPredictor(Predictor):
         freq: str,
         ctx: mx.Context,
         input_transform: Transformation,
+        lead_time: int = 0,
         forecast_generator: ForecastGenerator = SampleForecastGenerator(),
         output_transform: Optional[OutputTransform] = None,
-        float_type: DType = np.float32,
+        dtype: DType = np.float32,
     ) -> None:
-        super().__init__(prediction_length, freq)
+        super().__init__(
+            freq=freq,
+            lead_time=lead_time,
+            prediction_length=prediction_length,
+        )
 
         self.input_names = input_names
         self.prediction_net = prediction_net
@@ -249,12 +273,11 @@ class GluonPredictor(Predictor):
         self.forecast_generator = forecast_generator
         self.output_transform = output_transform
         self.ctx = ctx
-        self.float_type = float_type
+        self.dtype = dtype
 
     def hybridize(self, batch: DataBatch) -> None:
         """
         Hybridizes the underlying prediction network.
-
         Parameters
         ----------
         batch
@@ -271,13 +294,11 @@ class GluonPredictor(Predictor):
         Returns a variant of the current :class:`GluonPredictor` backed
         by a Gluon `SymbolBlock`. If the current predictor is already a
         :class:`SymbolBlockPredictor`, it just returns itself.
-
         Parameters
         ----------
         batch
             A batch of data to use for the required forward pass after the
             `hybridize()` call of the underlying network.
-
         Returns
         -------
         SymbolBlockPredictor
@@ -286,14 +307,22 @@ class GluonPredictor(Predictor):
         raise NotImplementedError
 
     def predict(
-        self, dataset: Dataset, num_eval_samples: Optional[int] = None
+        self,
+        dataset: Dataset,
+        num_samples: Optional[int] = None,
+        num_workers: Optional[int] = None,
+        num_prefetch: Optional[int] = None,
+        **kwargs,
     ) -> Iterator[Forecast]:
         inference_data_loader = InferenceDataLoader(
             dataset,
-            self.input_transform,
-            self.batch_size,
+            transform=self.input_transform,
+            batch_size=self.batch_size,
             ctx=self.ctx,
-            float_type=self.float_type,
+            dtype=self.dtype,
+            num_workers=num_workers,
+            num_prefetch=num_prefetch,
+            **kwargs,
         )
         yield from self.forecast_generator(
             inference_data_loader=inference_data_loader,
@@ -301,7 +330,7 @@ class GluonPredictor(Predictor):
             input_names=self.input_names,
             freq=self.freq,
             output_transform=self.output_transform,
-            num_eval_samples=num_eval_samples,
+            num_samples=num_samples,
         )
 
     def __eq__(self, that):
@@ -338,7 +367,7 @@ class GluonPredictor(Predictor):
                 prediction_length=self.prediction_length,
                 freq=self.freq,
                 ctx=self.ctx,
-                float_type=self.float_type,
+                dtype=self.dtype,
                 forecast_generator=self.forecast_generator,
                 input_names=self.input_names,
             )
@@ -353,7 +382,6 @@ class SymbolBlockPredictor(GluonPredictor):
     A predictor which serializes the network structure as an MXNet symbolic
     graph. Should be used for models deployed in production in order to
     ensure forward-compatibility as GluonTS models evolve.
-
     Used by the training shell if training is invoked with a hyperparameter
     `use_symbol_block_predictor = True`.
     """
@@ -364,14 +392,6 @@ class SymbolBlockPredictor(GluonPredictor):
         self, batch: DataBatch
     ) -> "SymbolBlockPredictor":
         return self
-
-    def serialize(self, path: Path) -> None:
-        logging.warning(
-            "Serializing RepresentableBlockPredictor instances does not save "
-            "the prediction network structure in a backwards-compatible "
-            "manner. Be careful not to use this method in production."
-        )
-        super().serialize(path)
 
     def serialize_prediction_net(self, path: Path) -> None:
         export_symb_block(self.prediction_net, path, "prediction_net")
@@ -412,7 +432,6 @@ class RepresentableBlockPredictor(GluonPredictor):
     JSON-serialization methods located in `gluonts.core.serde`. Use the following
     logic to create a `RepresentableBlockPredictor` from a trained prediction
     network.
-
     >>> def create_representable_block_predictor(
     ...        prediction_network: mx.gluon.HybridBlock,
     ...        **kwargs
@@ -433,11 +452,12 @@ class RepresentableBlockPredictor(GluonPredictor):
         freq: str,
         ctx: mx.Context,
         input_transform: Transformation,
+        lead_time: int = 0,
         forecast_generator: ForecastGenerator = SampleForecastGenerator(),
         output_transform: Optional[
             Callable[[DataEntry, np.ndarray], np.ndarray]
         ] = None,
-        float_type: DType = np.float32,
+        dtype: DType = np.float32,
     ) -> None:
         super().__init__(
             input_names=get_hybrid_forward_input_names(prediction_net),
@@ -447,18 +467,20 @@ class RepresentableBlockPredictor(GluonPredictor):
             freq=freq,
             ctx=ctx,
             input_transform=input_transform,
+            lead_time=lead_time,
             forecast_generator=forecast_generator,
             output_transform=output_transform,
-            float_type=float_type,
+            dtype=dtype,
         )
 
     def as_symbol_block_predictor(
         self, batch: DataBatch
     ) -> SymbolBlockPredictor:
-        symbol_block_net = hybrid_block_to_symbol_block(
-            hb=self.prediction_net,
-            data_batch=[batch[k] for k in self.input_names],
-        )
+        with self.ctx:
+            symbol_block_net = hybrid_block_to_symbol_block(
+                hb=self.prediction_net,
+                data_batch=[batch[k] for k in self.input_names],
+            )
 
         return SymbolBlockPredictor(
             input_names=self.input_names,
@@ -468,10 +490,19 @@ class RepresentableBlockPredictor(GluonPredictor):
             freq=self.freq,
             ctx=self.ctx,
             input_transform=self.input_transform,
+            lead_time=self.lead_time,
             forecast_generator=self.forecast_generator,
             output_transform=self.output_transform,
-            float_type=self.float_type,
+            dtype=self.dtype,
         )
+
+    def serialize(self, path: Path) -> None:
+        logging.warning(
+            "Serializing RepresentableBlockPredictor instances does not save "
+            "the prediction network structure in a backwards-compatible "
+            "manner. Be careful not to use this method in production."
+        )
+        super().serialize(path)
 
     def serialize_prediction_net(self, path: Path) -> None:
         export_repr_block(self.prediction_net, path, "prediction_net")
@@ -545,15 +576,11 @@ def _worker_loop(
 class ParallelizedPredictor(Predictor):
     """
     Runs multiple instances (workers) of a predictor in parallel.
-
     Exceptions are propagated from the workers.
-
     Note: That there is currently an issue with tqdm that will cause things
     to hang if the ParallelizedPredictor is used with tqdm and an exception
     occurs during prediction.
-
     https://github.com/tqdm/tqdm/issues/548
-
     Parameters
     ----------
     base_predictor
@@ -571,7 +598,11 @@ class ParallelizedPredictor(Predictor):
         num_workers: Optional[int] = None,
         chunk_size=1,
     ) -> None:
-        super().__init__(base_predictor.prediction_length, base_predictor.freq)
+        super().__init__(
+            freq=base_predictor.freq,
+            lead_time=base_predictor.lead_time,
+            prediction_length=base_predictor.prediction_length,
+        )
 
         self._base_predictor = base_predictor
         self._num_workers = (
@@ -686,7 +717,6 @@ class Localizer(Predictor):
     """
     A Predictor that uses an estimator to train a local model per time series and
     immediatly calls this to predict.
-
     Parameters
     ----------
     estimator
@@ -694,7 +724,11 @@ class Localizer(Predictor):
     """
 
     def __init__(self, estimator: "Estimator"):
-        super().__init__(estimator.prediction_length, estimator.freq)
+        super().__init__(
+            freq=estimator.freq,
+            lead_time=estimator.lead_time,
+            prediction_length=estimator.prediction_length,
+        )
         self.estimator = estimator
 
     def predict(self, dataset: Dataset, **kwargs) -> Iterator[Forecast]:

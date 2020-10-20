@@ -30,21 +30,21 @@ from gluonts.dataset.stat import (
     calculate_dataset_statistics,
 )
 from gluonts.evaluation import Evaluator
-from gluonts.model.estimator import Estimator, GluonEstimator
+from gluonts.model.estimator import Estimator
 from gluonts.model.forecast import Forecast
-from gluonts.model.predictor import GluonPredictor, Predictor
+from gluonts.model.predictor import Predictor
+from gluonts.support.util import maybe_len
 from gluonts.transform import TransformedDataset
 
 
 def make_evaluation_predictions(
-    dataset: Dataset, predictor: Predictor, num_eval_samples: int
+    dataset: Dataset, predictor: Predictor, num_samples: int
 ) -> Tuple[Iterator[Forecast], Iterator[pd.Series]]:
     """
     Return predictions on the last portion of predict_length time units of the
     target. Such portion is cut before making predictions, such a function can
     be used in evaluations where accuracy is evaluated on the last portion of
     the target.
-
     Parameters
     ----------
     dataset
@@ -52,17 +52,19 @@ def make_evaluation_predictions(
         the prediction_length portion is used when making prediction.
     predictor
         Model used to draw predictions.
-    num_eval_samples
+    num_samples
         Number of samples to draw on the model when evaluating.
-
     Returns
     -------
     """
 
     prediction_length = predictor.prediction_length
     freq = predictor.freq
+    lead_time = predictor.lead_time
 
-    def add_ts_dataframe(data_iterator: Iterator[DataEntry]) -> DataEntry:
+    def add_ts_dataframe(
+        data_iterator: Iterator[DataEntry],
+    ) -> Iterator[DataEntry]:
         for data_entry in data_iterator:
             data = data_entry.copy()
             index = pd.date_range(
@@ -85,19 +87,19 @@ def make_evaluation_predictions(
         assert (
             target.shape[-1] >= prediction_length
         )  # handles multivariate case (target_dim, history_length)
-        data["target"] = target[..., :-prediction_length] #对target序列进行裁剪为排除预测域
+        data["target"] = target[..., : -prediction_length - lead_time] #对target序列进行裁剪为排除预测域
         return data
 
     # TODO filter out time series with target shorter than prediction length
     # TODO or fix the evaluator so it supports missing values instead (all
-    # TODO the prophet_compared set may be gone otherwise with such a filtering)
+    # TODO the test set may be gone otherwise with such a filtering)
 
     dataset_trunc = TransformedDataset(
         dataset, transformations=[transform.AdhocTransform(truncate_target)]
     )
 
     return (
-        predictor.predict(dataset_trunc, num_eval_samples=num_eval_samples),
+        predictor.predict(dataset_trunc, num_samples=num_samples),
         ts_iter(dataset),
     )
 
@@ -113,34 +115,27 @@ def serialize_message(logger, message: str, variable):
 
 
 def backtest_metrics(
-    train_dataset: Optional[Dataset],
     test_dataset: Dataset,
-    forecaster: Union[Estimator, Predictor],
+    predictor: Predictor,
     evaluator=Evaluator(
         quantiles=(0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)
     ),
-    num_eval_samples: int = 100,
+    num_samples: int = 100,
     logging_file: Optional[str] = None,
-    use_symbol_block_predictor: bool = False,
 ):
     """
     Parameters
     ----------
-    train_dataset
-        Dataset to use for training.
     test_dataset
         Dataset to use for testing.
-    forecaster
-        An estimator or a predictor to use for generating predictions.
+    predictor
+        The predictor to test.
     evaluator
         Evaluator to use.
-    num_eval_samples
+    num_samples
         Number of samples to use when generating sample-based forecasts.
     logging_file
         If specified, information of the backtest is redirected to this file.
-    use_symbol_block_predictor
-        Use a :class:`SymbolBlockPredictor` during testing.
-
     Returns
     -------
     tuple
@@ -160,45 +155,16 @@ def backtest_metrics(
         logger.addHandler(handler)
     else:
         logger = logging.getLogger(__name__)
-
-    if train_dataset is not None:
-        train_statistics = calculate_dataset_statistics(train_dataset)
-        serialize_message(logger, train_dataset_stats_key, train_statistics)
-
+    
     test_statistics = calculate_dataset_statistics(test_dataset)
     serialize_message(logger, test_dataset_stats_key, test_statistics)
 
-    if isinstance(forecaster, Estimator):
-        serialize_message(logger, estimator_key, forecaster)
-        predictor = forecaster.train(train_dataset)
-
-        if isinstance(forecaster, GluonEstimator) and isinstance(
-            predictor, GluonPredictor
-        ):
-            inference_data_loader = InferenceDataLoader(
-                dataset=test_dataset,
-                transform=predictor.input_transform,
-                batch_size=forecaster.trainer.batch_size,
-                ctx=forecaster.trainer.ctx,
-                float_type=forecaster.float_type,
-            )
-
-            if forecaster.trainer.hybridize:
-                predictor.hybridize(batch=next(iter(inference_data_loader)))
-
-            if use_symbol_block_predictor:
-                predictor = predictor.as_symbol_block_predictor(
-                    batch=next(iter(inference_data_loader))
-                )
-    else:
-        predictor = forecaster
-
     forecast_it, ts_it = make_evaluation_predictions(
-        test_dataset, predictor=predictor, num_eval_samples=num_eval_samples
+        test_dataset, predictor=predictor, num_samples=num_samples
     )
 
     agg_metrics, item_metrics = evaluator(
-        ts_it, forecast_it, num_series=len(test_dataset)
+        ts_it, forecast_it, num_series=maybe_len(test_dataset)
     )
 
     # we only log aggregate metrics for now as item metrics may be very large
@@ -214,6 +180,7 @@ def backtest_metrics(
     return agg_metrics, item_metrics
 
 
+# TODO does it make sense to have this then?
 class BacktestInformation(NamedTuple):
     train_dataset_stats: DatasetStatistics
     test_dataset_stats: DatasetStatistics

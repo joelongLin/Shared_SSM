@@ -12,7 +12,7 @@
 # permissions and limitations under the License.
 
 # Standard library imports
-from typing import NamedTuple
+from typing import Iterator, NamedTuple, Optional
 
 # Third-party imports
 import numpy as np
@@ -25,17 +25,16 @@ from gluonts.core import fqname_for
 from gluonts.core.component import DType, from_hyperparameters, validated
 from gluonts.core.exception import GluonTSHyperparametersError
 from gluonts.dataset.common import Dataset
-from gluonts.dataset.loader import TrainDataLoader
+from gluonts.dataset.loader import TrainDataLoader, ValidationDataLoader
 from gluonts.model.predictor import Predictor
-from gluonts.support.util import get_hybrid_forward_input_names
 from gluonts.trainer import Trainer
+from gluonts.support.util import get_hybrid_forward_input_names
 from gluonts.transform import Transformation
 
 
 class Estimator:
     """
     An abstract class representing a trainable model.
-
     The underlying model is trained by calling the `train` method with
     a training `Dataset`, producing a `Predictor` object.
     """
@@ -44,16 +43,26 @@ class Estimator:
 
     prediction_length: int
     freq: str
+    lead_time: int
 
-    def train(self, training_data: Dataset) -> Predictor:
+    def __init__(self, lead_time: int = 0, **kwargs) -> None:
+        # TODO validation of prediction_length and freq could also
+        # TODO be bubbled-up here from subclasses classes
+        assert lead_time >= 0, "The value of `lead_time` should be >= 0"
+
+        self.lead_time = lead_time
+
+    def train(
+        self, training_data: Dataset, validation_data: Optional[Dataset] = None
+    ) -> Predictor:
         """
         Train the estimator on the given data.
-
         Parameters
         ----------
         training_data
             Dataset to train the model on.
-
+        validation_data
+            Dataset to validate the model on during training.
         Returns
         -------
         Predictor
@@ -65,12 +74,23 @@ class Estimator:
     def from_hyperparameters(cls, **hyperparameters):
         return from_hyperparameters(cls, **hyperparameters)
 
+    @classmethod
+    def derive_auto_fields(cls, train_iter):
+        return {}
+
+    @classmethod
+    def from_inputs(cls, train_iter, **params):
+        # auto_params usually include `use_feat_dynamic_real`, `use_feat_static_cat` and `cardinality`
+        auto_params = cls.derive_auto_fields(train_iter)
+        # user specified 'params' will take precedence:
+        params = {**auto_params, **params}
+        return cls.from_hyperparameters(**params)
+
 
 class DummyEstimator(Estimator):
     """
     An `Estimator` that, upon training, simply returns a pre-constructed
     `Predictor`.
-
     Parameters
     ----------
     predictor_cls
@@ -81,9 +101,14 @@ class DummyEstimator(Estimator):
 
     @validated()
     def __init__(self, predictor_cls: type, **kwargs) -> None:
+        super().__init__(**kwargs)
         self.predictor = predictor_cls(**kwargs)
 
-    def train(self, training_data: Dataset) -> Predictor:
+    def train(
+        self,
+        training_data: Dataset,
+        validation_dataset: Optional[Dataset] = None,
+    ) -> Predictor:
         return self.predictor
 
 
@@ -96,17 +121,17 @@ class TrainOutput(NamedTuple):
 class GluonEstimator(Estimator):
     """
     An `Estimator` type with utilities for creating Gluon-based models.
-
     To extend this class, one needs to implement three methods:
     `create_transformation`, `create_training_network`, `create_predictor`.
     """
 
     @validated()
     def __init__(
-        self, trainer: Trainer, float_type: DType = np.float32
+        self, trainer: Trainer, lead_time: int = 0, dtype: DType = np.float32
     ) -> None:
+        super().__init__(lead_time=lead_time)
         self.trainer = trainer
-        self.float_type = float_type
+        self.dtype = dtype
 
     @classmethod
     def from_hyperparameters(cls, **hyperparameters) -> "GluonEstimator":
@@ -121,8 +146,9 @@ class GluonEstimator(Estimator):
 
         try:
             trainer = from_hyperparameters(Trainer, **hyperparameters)
+
             return cls(
-                **Model(**{**hyperparameters, "trainer": trainer}).__values__
+                **Model(**{**hyperparameters, "trainer": trainer}).__dict__
             )
         except ValidationError as e:
             raise GluonTSHyperparametersError from e
@@ -130,7 +156,6 @@ class GluonEstimator(Estimator):
     def create_transformation(self) -> Transformation:
         """
         Create and return the transformation needed for training and inference.
-
         Returns
         -------
         Transformation
@@ -143,7 +168,6 @@ class GluonEstimator(Estimator):
         """
         Create and return the network used for training (i.e., computing the
         loss).
-
         Returns
         -------
         HybridBlock
@@ -156,7 +180,6 @@ class GluonEstimator(Estimator):
     ) -> Predictor:
         """
         Create and return a predictor object.
-
         Returns
         -------
         Predictor
@@ -164,10 +187,16 @@ class GluonEstimator(Estimator):
         """
         raise NotImplementedError
 
-    def train_model(self, training_data: Dataset) -> TrainOutput:
+    def train_model(
+        self,
+        training_data: Dataset,
+        validation_data: Optional[Dataset] = None,
+        num_workers: Optional[int] = None,
+        num_prefetch: Optional[int] = None,
+        shuffle_buffer_length: Optional[int] = None,
+        **kwargs,
+    ) -> TrainOutput:
         transformation = self.create_transformation()
-
-        transformation.estimate(iter(training_data))
 
         training_data_loader = TrainDataLoader(
             dataset=training_data,
@@ -176,14 +205,13 @@ class GluonEstimator(Estimator):
             num_batches_per_epoch=self.trainer.num_batches_per_epoch,
             ctx=self.trainer.ctx,
             shuffle_for_training= False, # 源码中设置的是 打乱training 的顺序，在这里设置成 False ，也就是不会打乱顺序
-            float_type=self.float_type,
+            dtype=self.dtype,
         )
 
         # ensure that the training network is created within the same MXNet
         # context as the one that will be used during training
         with self.trainer.ctx:
             trained_net = self.create_training_network()
-
 
         self.trainer(
             net=trained_net,

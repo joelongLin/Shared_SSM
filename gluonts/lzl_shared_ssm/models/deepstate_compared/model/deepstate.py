@@ -97,7 +97,7 @@ class DeepStateNetwork(object):
     def load_original_data(self):
         name_prefix = 'data_process/processed_data/{}_{}_{}_{}.pkl'
         # 导入 target 以及 environment 的数据
-        ds_names = ','.join([self.config.target, self.config.environment])
+        
         if self.config.slice == 'overlap':
             series = self.config.timestep - self.config.past_length - self.config.pred_length + 1
             print('每个数据集的序列数量为 ,', series)
@@ -645,13 +645,14 @@ class DeepStateNetwork(object):
                 print('something bad appears')
             finally:
                 print('whatever ! life is still fantastic !')
-        eval_result_root_path = 'evaluate/results/{}_slice({})_past({})_pred({})'.format(self.config.target.replace(',' ,'_') , self.config.slice ,self.config.past_length , self.config.pred_length)
+        eval_result_root_path = 'evaluate/results/{}_length({})_slice({})_past({})_pred({})'.format(
+            self.config.target.replace(',' ,'_') , self.config.timestep , self.config.slice ,self.config.past_length , self.config.pred_length)
         model_result = [];
 
         if not os.path.exists(eval_result_root_path):
             os.makedirs(eval_result_root_path)
         model_result_path = os.path.join(eval_result_root_path, '{}.pkl'.format(
-            'deepstate(%s)_' % (self.config.target)
+            'deepstate_' 
             + (self.train_log_path.split('/')[-1] if hasattr(self, 'train_log_path') else self.config.reload_model)
         ))
         model_result_path = add_time_mark_to_file(model_result_path)

@@ -3,139 +3,41 @@
 import numpy as np
 import pandas as pd
 from typing import List, NamedTuple, Optional , Union
+
+import os
+if 'lzl_shared_ssm' in os.getcwd():
+        if 'data_process' in os.getcwd():
+            os.chdir('..')
+        # print('------当前与处理数据的路径：', os.getcwd() ,'-------')
+else:
+    # print('处理数据的时候，请先进入finance的主目录')
+    os.chdir('gluonts/lzl_shared_ssm')
+# 为了能够让 代码直接使用 ../gluon/gluonts/下的代码
+import sys
+sys.path.insert(0,
+    os.path.abspath(os.path.join(os.getcwd(), "../.."))
+)
+# print(sys.path)
+
 from gluonts.dataset.common import ListDataset
 from gluonts.dataset.common import TrainDatasets
 from gluonts.dataset.field_names import FieldName
 import pickle
-import os
+
+
 import argparse
+from data_info import datasets_info,DatasetInfo
 
 parser = argparse.ArgumentParser(description="data")
-parser.add_argument('-st' ,'--start' , type=str , help='数据集开始的时间', default='2018-08-02')
-parser.add_argument('-d','--dataset', type=str, help='需要重新生成的数据的名称',default='gold')
-parser.add_argument('-t','--train_length', type=int, help='数据集训练长度', default=60)
-parser.add_argument('-p'  ,'--pred_length' , type = int , help = '需要预测的长度' , default=3)
+parser.add_argument('-st' ,'--start' , type=str , help='数据集开始的时间', default='2017-01-02')
+parser.add_argument('-d','--dataset', type=str, help='需要重新生成的数据的名称',default='COMEX_Silver')
+parser.add_argument('-t','--train_length', type=int, help='数据集训练长度', default=90)
+parser.add_argument('-p'  ,'--pred_length' , type = int , help = '需要预测的长度' , default=5)
 parser.add_argument('-s'  ,'--slice' , type = str , help = '需要预测的长度' , default='overlap')
-parser.add_argument('-n' , '--num_time_steps' , type=int  , help='时间步的数量' , default=503)
-parser.add_argument('-f' , '--freq' , type=str  , help='时间间隔' , default='1D')
+parser.add_argument('-n' , '--num_time_steps' , type=int  , help='时间步的数量' , default=782)
+parser.add_argument('-f' , '--freq' , type=str  , help='时间间隔' , default='1B')
 args = parser.parse_args()
 
-root='data_process/raw_data/'
-class DatasetInfo(NamedTuple):
-    name: str  # 该数据集的名称
-    url: Union[str, List[str]]  # 存放该数据集的
-    time_col: str  # 表明这些 url 里面对应的 表示时刻的名称 如: eth.csv 中的 beijing_time  或者 btc.csv 中的Date
-    dim: int  # 该数据集存在多少条序列
-    aim: List[str]  # 序列的目标特征，包含的数量特征应该与 url， time_col一致
-    index_col: Optional[int] = None  # 是否存在多余的一列 index
-    feat_dynamic_cat: Optional[str] = None  # 表明该序列类别的 (seq_length , category)
-
-datasets_info = {
-    "btc": DatasetInfo(
-        name="btc",
-        url=root + 'btc.csv',
-        time_col='beijing_time',
-        dim=1,
-        aim=['close'],
-    ),
-    "btc_diff": DatasetInfo(
-        name="btc_diff",
-        url=root + 'btc_diff.csv',
-        time_col='beijing_time',
-        dim=1,
-        aim=['close'],
-    ),
-    "eth": DatasetInfo(
-        name="eth",
-        url=root + 'eth.csv',
-        time_col='beijing_time',
-        dim=1,
-        aim=['close'],  # 这样子写只是为了测试预处理程序是否强大
-    ),
-    "eth_diff": DatasetInfo(
-        name="eth_diff",
-        url=root + 'eth_diff.csv',
-        time_col='beijing_time',
-        dim=1,
-        aim=['close'],  # 这样子写只是为了测试预处理程序是否强大
-    ),
-    "gold": DatasetInfo(
-        name="gold",
-        url=root + 'GOLD.csv',
-        time_col='Date',
-        dim=2,
-        aim=['Open','Close'],
-    ),
-    "gold_diff": DatasetInfo(
-        name="gold_diff",
-        url=root + 'GOLD_diff.csv',
-        time_col='Date',
-        dim=2,
-        aim=['Open','Close'],
-    ),
-    "gold_lbma": DatasetInfo(
-        name="gold_lbma",
-        url=root + 'gold_lbma.csv',
-        time_col='Date',
-        dim=2,
-        aim=['USD(AM)', 'GBP(AM)'],
-    ),
-    "gold_lbma_diff": DatasetInfo(
-        name="gold_lbma_diff",
-        url=root + 'gold_lbma_diff.csv',
-        time_col='Date',
-        dim=2,
-        aim=['USD(AM)', 'GBP(AM)'],
-    ),
-    "LMEAluminium": DatasetInfo(
-        name="Aluminium",
-        url=[root + 'SIGIR/Train/Train_data/LMEAluminium3M_train.csv' , root+'SIGIR/Validation/Validation_data/LMEAluminium3M_validation.csv'],
-        time_col='Unnamed: 0.1',
-        index_col=0,
-        dim=1,
-        aim=['Close.Price'],
-    ),
-    "LMECopper": DatasetInfo(
-        name="Copper",
-        url= [root + 'SIGIR/Train/Train_data/LMECopper3M_train.csv', root+'SIGIR/Validation/Validation_data/LMECopper3M_validation.csv'],
-        time_col='Unnamed: 0.1',
-        index_col=0,
-        dim=1,
-        aim=['Close.Price'],
-    ),
-    "LMELead": DatasetInfo(
-        name="Lead",
-        url=[root + 'SIGIR/Train/Train_data/LMELead3M_train.csv', root+'SIGIR/Validation/Validation_data/LMELead3M_validation.csv'],
-        time_col='Unnamed: 0.1',
-        index_col=0,
-        dim=1,
-        aim=['Close.Price'],
-    ),
-    "LMENickel": DatasetInfo(
-        name="Nickel",
-        url=[root + 'SIGIR/Train/Train_data/LMENickel3M_train.csv',root +'SIGIR/Validation/Validation_data/LMENickel3M_validation.csv'],
-        time_col='Unnamed: 0.1',
-        index_col=0,
-        dim=1,
-        aim=['Close.Price'],
-    ),
-    "LMETin": DatasetInfo(
-        name="Tin",
-        url=[root + 'SIGIR/Train/Train_data/LMETin3M_train.csv' , root+'SIGIR/Validation/Validation_data/LMETin3M_validation.csv'],
-        time_col='Unnamed: 0.1',
-        index_col=0,
-        dim=1,
-        aim=['Close.Price'],
-    ),
-    "LMEZinc": DatasetInfo(
-        name="Zinc",
-        url=[root + 'SIGIR/Train/Train_data/LMEZinc3M_train.csv' , root+'SIGIR/Validation/Validation_data/LMEZinc3M_validation.csv'],
-        time_col='Unnamed: 0.1',
-        index_col=0,
-        dim=1,
-        aim=['Close.Price'],
-    ),
-}
 # 切割完之后， 除了目标序列target_slice 之外
 # 我去掉了DeepState 里面的 feat_static_cat, 因为真的不用给样本进行编号
 # 此方法用于 stride = 1, 完全滑动窗口
@@ -188,7 +90,10 @@ slice_func = {
     'nolap' : slice_df_nolap
 }
 #这里特别容易出现问题
-def load_finance_from_csv(ds_info: DatasetInfo):
+def load_finance_from_csv(ds_info):
+    '''
+    ds_info : DatasetInfo type contain the basic information of raw dataset
+    '''
     df = pd.DataFrame()
     path, time_str, aim = ds_info.url, ds_info.time_col, ds_info.aim
     series_start = pd.Timestamp(ts_input=args.start, freq=args.freq)
@@ -209,6 +114,20 @@ def load_finance_from_csv(ds_info: DatasetInfo):
 
     url_series.set_index(time_str, inplace=True)
     url_series = url_series.loc[series_start:series_end][aim]
+
+    # NOTE: statistic the misssing date
+    expected_date = pd.date_range(start=series_start, periods=args.num_time_steps, freq=series_start.freq)
+    missing_date = []
+    for i in expected_date:
+        if i not in url_series.index:
+            missing_date.append(i)
+    print("==========missing day num:", len(missing_date) ,"======")
+    import holidays
+    UK_holidays = holidays.UK()
+    US_holidays = holidays.US()
+    for day in missing_date:
+        print('missing : ', day , ' dayofweek' , day.isoweekday() ,' holidayofUS' , US_holidays.get(day))
+    
 
     if url_series.shape[0] < args.num_time_steps:
         # 添加缺失的时刻(比如周末数据缺失这样的)
@@ -294,13 +213,8 @@ def createGluontsDataset(data_name):
           '(切片之后)每个数据集样本数目为：'  , dataset.metadata['sample_size'])
 
 if __name__ == '__main__':
-    if 'lzl_shared_ssm' in os.getcwd():
-        if 'data_process' in os.getcwd():
-            os.chdir('..')
-        print('------当前与处理数据的路径：', os.getcwd() ,'-------')
-    else:
-        print('处理数据的时候，请先进入finance的主目录')
-        exit()
+          
+        
 
     finance_data_name = args.dataset
     createGluontsDataset(finance_data_name)

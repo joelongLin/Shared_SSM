@@ -317,10 +317,10 @@ class LDS(object):
                 ,[2,0,1,3,4]
             )
         )
-        print('tensorflow : samples_eps_obs, samples_std_normal的维度 ：'
-              , samples_eps_obs.shape
-              , samples_std_normal.shape
-        )
+        # print('tensorflow : samples_eps_obs, samples_std_normal的维度 ：'
+        #       , samples_eps_obs.shape
+        #       , samples_std_normal.shape
+        # )
 
         # Sample the prior state.
         # samples_lat_state: (num_samples, batch_size, latent_dim, 1)

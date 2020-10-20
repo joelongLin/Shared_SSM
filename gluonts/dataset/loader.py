@@ -206,33 +206,31 @@ class TrainDataLoader(DataLoader):
 
 
 class ValidationDataLoader(DataLoader):
-    """
-     An Iterable type for iterating and transforming a dataset just once, in
-     batches of a prescribed size.
-     The transformation are applied with in training mode, i.e. with the flag
-     `is_train = True`.
-     Parameters
-     ----------
-     dataset
-         The dataset from which to load data.
-     transform
-         A transformation to apply to each entry in the dataset.
-     batch_size
-         The size of the batches to emit.
-     ctx
-         MXNet context to use to store data.
-     dtype
-         Floating point type to use.
-     """
-
-    def __iter__(self) -> Iterator[DataBatch]:
-        buffer = BatchBuffer(self.batch_size, self.ctx, self.dtype)
-        for data_entry in self.transform(iter(self.dataset), is_train=True):
-            buffer.add(data_entry)
-            if len(buffer) >= self.batch_size:
-                yield buffer.next_batch()
-        if len(buffer) > 0:
-            yield buffer.next_batch()
+    def __init__(
+        self,
+        dataset: Dataset,
+        *,
+        transform: Transformation,
+        batch_size: int,
+        ctx: mx.Context,
+        num_workers: Optional[int] = None,
+        num_prefetch: Optional[int] = None,
+        dtype: DType = np.float32,
+        **kwargs,
+    ) -> None:
+        super().__init__(
+            dataset=dataset,
+            transform=transform,
+            is_train=True,
+            batch_size=batch_size,
+            ctx=ctx,
+            dtype=dtype,
+            cyclic=False,
+            num_workers=num_workers,
+            num_prefetch=num_prefetch,
+            shuffle_buffer_length=None,
+            **kwargs,
+        )
 
 
 class InferenceDataLoader(DataLoader):
@@ -256,6 +254,35 @@ class InferenceDataLoader(DataLoader):
     dtype
         Floating point type to use.
     """
+
+    def __init__(
+        self,
+        dataset: Dataset,
+        transform: Transformation,
+        batch_size: int,
+        ctx: mx.Context,
+        num_workers: Optional[int] = None,
+        num_prefetch: Optional[int] = None,
+        dtype: DType = np.float32,
+        **kwargs,
+    ):
+        # super().__init__(
+        #     dataset=dataset,
+        #     transform=transform,
+        #     is_train=False,
+        #     batch_size=batch_size,
+        #     ctx=ctx,
+        #     dtype=dtype,
+        #     cyclic=False,
+        #     num_workers=num_workers,
+        #     num_prefetch=num_prefetch,
+        #     shuffle_buffer_length=None,
+        #     **kwargs,
+        # )
+        super().__init__(dataset, transform, batch_size, ctx, dtype)
+        self.num_workers = num_workers
+        self.num_prefetch = num_prefetch
+
 
     def __iter__(self) -> Iterator[DataBatch]:
         buffer = BatchBuffer(self.batch_size, self.ctx, self.dtype)
