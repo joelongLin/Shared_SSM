@@ -78,8 +78,11 @@ def get_ticks(variable : str , i : int) -> str:
 
 
 if __name__ == '__main__':
-    
+    min_pvalue = float("inf")
+    min_pvalue_file = ""
     for path in os.listdir(root_path):
+        if path != "seq(5)_dim_l(4)_dim_u(5)_lag(5).pkl":
+            continue
         if prefix in path:
             file_marker = path.strip(prefix).split('.')[0]
             # 生成的代码里面没有(0) 所以只能自己加了
@@ -93,7 +96,6 @@ if __name__ == '__main__':
                 item_nums = prediction_analysis['l_mean'].shape[0]
                 # 面对不同的 target 
                 for i_target in range(item_nums):
-                   
                     
                     corr_input = np.concatenate(
                         (prediction_analysis[compared_1][i_target ,  : , 0 , :],
@@ -116,8 +118,15 @@ if __name__ == '__main__':
                     
                     corr_heatmap.append(corr_output)
                     pvalue_heatmap.append(pvalue_output)
-
                 
+                curr_pvalue = 0;
+                for i in range(item_nums):
+                    curr_pvalue += np.sum(abs(pvalue_heatmap[i]))
+                print("当前的pvalue为：" , curr_pvalue)
+                if curr_pvalue <= min_pvalue:
+                    print('更新pvalue...')
+                    min_pvalue = curr_pvalue
+                    min_pvalue_file = path;
                 #! 不再独个结果地呈现相关性，而是呈现每个文件 5个序列的长度
                 if draw_heat_map:
                     #? 给图片的长度添加补全操作，因为横坐标上的内容比较多一些
@@ -150,10 +159,10 @@ if __name__ == '__main__':
                         )
                         #单独设置colorbar的大小
                         if i == item_nums-1:
-                            ax_corr[i].collections[0].colorbar.ax.tick_params(labelsize=15)
-                        ax_corr[i].tick_params(labelsize=15) 
-                        #在头部设置时间步
-                        ax_corr[i].set_title(target.split(",")[i],fontsize=20)
+                            ax_corr[i].collections[0].colorbar.ax.tick_params(labelsize=25)
+                        ax_corr[i].tick_params(labelsize=20) 
+                        #在头部设置标题
+                        ax_corr[i].set_title(target.split(",")[i],fontsize=35)
                             
                     plt.savefig(os.path.join(pic_root_path ,
                         '1st_step_{}_lags({})_{}_{}_vs_{}.pdf'.format(
@@ -174,17 +183,17 @@ if __name__ == '__main__':
                         
                             
                         pvalue_pd_data=pd.DataFrame(pvalue_heatmap[i] , index=x_ticks,columns=y_ticks)
-                        sns.heatmap(pvalue_pd_data ,annot=True, annot_kws={"size":10} , vmax=corr_vmax, vmin=corr_vmin 
+                        sns.heatmap(pvalue_pd_data ,annot=False, annot_kws={"size":10} , vmax=pvalue_vmax, vmin=pvalue_vmin 
                                             , fmt=".2f" ,cmap=cmp, cbar=(True if i==seq-1 else False), ax = ax_pvalue[i]
                         )
                          #单独设置colorbar的大小
                         if i == item_nums-1:
-                            ax_corr[i].collections[0].colorbar.ax.tick_params(labelsize=15)
-                        ax_pvalue[i].tick_params(labelsize=15) 
+                            ax_pvalue[i].collections[0].colorbar.ax.tick_params(labelsize=25)
+                        ax_pvalue[i].tick_params(labelsize=20) 
                         
                         #在头部设置时间步
                         
-                        ax_pvalue[i].set_title(target.split(",")[i],fontsize=20)
+                        ax_pvalue[i].set_title(target.split(",")[i],fontsize=35)
                     
                     plt.savefig(os.path.join(pic_root_path ,
                         '1st_step_{}_lags({})_{}_{}_vs_{}_pvalue.pdf'.format(
@@ -212,6 +221,7 @@ if __name__ == '__main__':
                     #//     )
                     #// plt.close()
                     #// exit()
+    print("当前最小pvalue的文件为 " , min_pvalue_file ,"其pvalue的值为" , min_pvalue)
 
             
                 

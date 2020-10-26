@@ -23,7 +23,7 @@ length=503
 # length = 2867
 past = 90
 seq = 5
-maxlags = 5
+maxlags = 6
 dim_l = 4
 dim_u = 5
 dim_z = 1
@@ -79,6 +79,9 @@ if __name__ == '__main__':
     min_pvalue = float("inf")
     min_pvalue_file = ""
     for path in os.listdir(root_path):
+        #! 这里只是为了绘出最佳的文档
+        if path != "seq(5)_dim_l(4)_dim_u(5)_lag(6)_time(1).pkl":
+            continue
         if prefix in path:
             file_marker = path.strip(prefix).split('.')[0]
             # 生成的代码里面没有(0) 所以只能自己加了
@@ -134,7 +137,7 @@ if __name__ == '__main__':
                                 for i in range(compared_var_dim[compared_2])]
                     
                     corr_vmax = 0.4; corr_vmin = -0.4
-                    pvalue_vmax = 1.0 ; pvalue_vmin = 0.0;
+                    pvalue_vmax = 0.3 ; pvalue_vmin = 0.0;
                     cmp = "YlGnBu"
 
                     #* 先绘出相关系数
@@ -156,14 +159,14 @@ if __name__ == '__main__':
                             )
                             #单独设置colorbar的大小
                             if j == seq-1:
-                                ax_corr[i][j].collections[0].colorbar.ax.tick_params(labelsize=20)
-                            ax_corr[i][j].tick_params(labelsize=15) 
+                                ax_corr[i][j].collections[0].colorbar.ax.tick_params(labelsize=25)
+                            ax_corr[i][j].tick_params(labelsize=20) 
                             #在最左边设置label
                             if j == 0:
-                                ax_corr[i][j].set_ylabel(target.split(",")[i] ,fontsize=25)
+                                ax_corr[i][j].set_ylabel(target.split(",")[i] ,fontsize=35)
                             #在头部设置时间步
                             if i == 0:
-                                ax_corr[i][j].set_title(r'$\gamma + {}$'.format(j+1),fontsize=15)
+                                ax_corr[i][j].set_title(r'$\gamma + {}$'.format(j+1),fontsize=35)
                             
                     plt.savefig(os.path.join(pic_root_path ,
                         '{}_lags({})_{}_{}_vs_{}.pdf'.format(
@@ -184,19 +187,19 @@ if __name__ == '__main__':
                         for j in range(seq):
                             print('正在绘制' + str(j+1) + '步的内容')
                             pvalue_pd_data=pd.DataFrame(pvalue_heatmap[i][j] , index=x_ticks,columns=y_ticks)
-                            sns.heatmap(pvalue_pd_data ,annot=True, annot_kws={"size":10} , vmax=corr_vmax, vmin=corr_vmin 
+                            sns.heatmap(pvalue_pd_data ,annot=False, annot_kws={"size":10} , vmax=pvalue_vmax, vmin=pvalue_vmin 
                                                 , fmt=".2f" ,cmap=cmp, cbar=(True if j==seq-1 else False), ax = ax_pvalue[i][j]
                             )
                             #单独设置colorbar的大小
                             if j == seq-1:
-                                ax_pvalue[i][j].collections[0].colorbar.ax.tick_params(labelsize=15)
-                            ax_pvalue[i][j].tick_params(labelsize=15) 
+                                ax_pvalue[i][j].collections[0].colorbar.ax.tick_params(labelsize=22)
+                            ax_pvalue[i][j].tick_params(labelsize=20) 
                             #在最左边设置label
                             if j == 0:
-                                ax_pvalue[i][j].set_ylabel(target.split(",")[i] ,fontsize=25)
+                                ax_pvalue[i][j].set_ylabel(target.split(",")[i] ,fontsize=35)
                             #在头部设置时间步
                             if i == 0:
-                                ax_pvalue[i][j].set_title(r'$\gamma + {}$'.format(j+1),fontsize=20)
+                                ax_pvalue[i][j].set_title(r'$\gamma + {}$'.format(j+1),fontsize=35)
                     
                     plt.savefig(os.path.join(pic_root_path ,
                         '{}_lags({})_{}_{}_vs_{}_pvalue.pdf'.format(
