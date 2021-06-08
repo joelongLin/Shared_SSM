@@ -209,7 +209,7 @@ datasets_info = {
     # Indices_VIX Index_train.csv
     "DXY":DatasetInfo(
         name="DXY",
-        url=root + 'SIGIR/Train/Train_data/Indices_DXY Curncy_train.csv' , 
+        url=root + 'SIGIR/Train/Train_data/Indices_DXY Index_train.csv' , 
         time_col='Unnamed: 0.1',
         index_col=0,
         dim=1,

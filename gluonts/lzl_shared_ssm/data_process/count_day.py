@@ -1,6 +1,7 @@
 import datetime
 import pandas as pd
 # 计算两个日期之间的工作日数,非天数.
+# 
 class workDays():
     def __init__(self, start_date, end_date, days_off=None):
         """days_off:休息日,默认周六日, 以0(星期一)开始,到6(星期天)结束, 传入tupple
@@ -54,6 +55,6 @@ class workDays():
 
 if __name__ == "__main__":
     start_date = pd.Timestamp("2008-1-4")
-    end_date = pd.Timestamp("2018-12-31")
+    end_date = pd.Timestamp("2017-12-31")
     test = workDays(start_date=start_date , end_date=end_date)
     print(test.workDaysCount())
