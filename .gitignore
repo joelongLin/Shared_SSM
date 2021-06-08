@@ -24,6 +24,10 @@ gluonts/lzl_shared_ssm/data_process/raw_data
 
 # picture #
 *.png
+*.pdf
+
+# some output #
+*.out
 
 # cache #
 *.pyc
