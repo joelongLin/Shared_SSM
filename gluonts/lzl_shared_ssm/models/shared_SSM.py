@@ -213,24 +213,23 @@ class SharedSSM(object):
 
     def build_module(self):
         with  tf.variable_scope('global_variable', reuse=tf.AUTO_REUSE):
-            # 放入可能出现的SSM参数
             #  A(transition)是对角矩阵表示在转移的时候尽可能保持不变, B(control) 和 C(emission) 从高斯分布中随机进行采样
             init = np.array([np.eye(self.config.dim_l).astype(np.float32) for _ in range(self.config.K)])  # (K, dim_z , dim_z)
             init = np.tile(init, reps=(self.ssm_num, 1, 1, 1))
             A = tf.get_variable('A', initializer=init)
-            # A = tf.tile(tf.expand_dims(A,0), multiples=(self.ssm_num, 1, 1, 1))  # (ssm_num , K , dim_z, dim_z)
+            
 
             init = np.array([self.config.init_kf_matrices * np.random.randn(self.config.dim_l, self.config.dim_u).astype(np.float32)
                           for _ in range(self.config.K)])
             init = np.tile(init, reps=(self.ssm_num, 1, 1, 1))
             B = tf.get_variable('B' , initializer=init)
-            # B = tf.tile(tf.expand_dims(B,0) , multiples=(self.ssm_num, 1, 1, 1))  # (ssm_num , K , dim_z, dim_z)
+            
 
             init = np.array([self.config.init_kf_matrices * np.random.randn(self.config.dim_z, self.config.dim_l).astype(np.float32)
                           for _ in range(self.config.K)])
             init = np.tile(init, reps=(self.ssm_num, 1, 1, 1))
             C = tf.get_variable('C' , initializer=init)
-            # C = tf.tile(tf.expand_dims(C,0), multiples=(self.ssm_num, 1, 1, 1))  # (ssm_num , K , dim_z, dim_z)
+            
 
             # Initial observed variable z_0
             init = np.zeros((self.config.dim_z,), dtype=np.float32)
@@ -238,19 +237,9 @@ class SharedSSM(object):
             z_0 = tf.get_variable('z_0' , initializer=init)
             z_0 = tf.tile(tf.expand_dims(z_0,0) ,multiples=(self.ssm_num,1))
 
-            # p(l_1) , SSM 隐空间的的的初始状态, mu , Sigma 分别代表 隐状态的 均值和方差
-            #mu = np.zeros((self.config.batch_size, self.config.dim_l), dtype=np.float32)
-            #mu = np.tile(mu, reps=(self.ssm_num, 1, 1)) #(ssm_num , bs , dim_l)
-            #mu = tf.get_variable('mu' , initializer=mu)
-            # mu = tf.tile(tf.expand_dims(mu, 0), multiples=(self.ssm_num, 1, 1))
-            #Sigma = np.tile(self.config.init_cov * np.eye(self.config.dim_l, dtype=np.float32), (self.config.batch_size, 1, 1))
-            #Sigma = np.tile(Sigma, reps=(self.ssm_num, 1, 1, 1)) #(ssm_num , bs , dim_l , dim_l)
-            #Sigma = tf.get_variable('Sigma' , initializer=Sigma)
-            # Sigma = tf.tile(tf.expand_dims(Sigma, 0), multiples=(self.ssm_num, 1, 1, 1))
+            
 
         self.init_vars = dict(A=A, B=B, C=C, z_0=z_0)
-        # self.init_vars['mu'] =mu
-        # self.init_vars['Sigma'] =Sigma
 
         if self.config.scaling:
             self.scaler = MeanScaler(keepdims=False)
@@ -362,7 +351,6 @@ class SharedSSM(object):
 
         # 一定要注意 Tensor 和 Variable 千万不能随意当成相同的东西
         # 对 time_feature 进行处理
-        # TODO: 现在假设 transition的噪声 emission的噪声都由 target的时间特征决定
         target_time_rnn_out, self.target_time_train_last_state = tf.nn.dynamic_rnn(
             cell=self.time_feature_lstm,
             inputs=self.placeholders['target_past_time_feature'],
@@ -426,6 +414,7 @@ class SharedSSM(object):
                                           state = alpha_lstm_init
                                           )
 
+        # DEMENSION:
         # z_pred_scaled(ssm_num ,bs , seq , 1)
         # pred_l_0[(ssm_num, bs , seq ,dim_l),(ssm_num, bs , seq ,dim_l,dim_l)]
         # pred_alpha_0 (ssm_num, bs ,K)
@@ -507,10 +496,8 @@ class SharedSSM(object):
                                           state=self.alpha_train_last_state
                                       )
         self.pred_l_mean , self.pred_l_cov, self.pred_z_mean_scaled , self.pred_z_cov = self.pred_kf.compute_forwards_pred_mode()
-        self.pred_z_mean_scaled = tf.transpose(self.pred_z_mean_scaled, [1,2,0,3])
-        self.pred_z_cov = tf.transpose(self.pred_z_cov , [1,2,0,3,4])
-        #(pred ,ssm_num, bs, dim_z)
-        #(pred , ssm_num ,bs, dim_z, dim_z)
+        self.pred_z_mean_scaled = tf.transpose(self.pred_z_mean_scaled, [1,2,0,3]) #(pred ,ssm_num, bs, dim_z)
+        self.pred_z_cov = tf.transpose(self.pred_z_cov , [1,2,0,3,4]) #(pred , ssm_num ,bs, dim_z, dim_z)
         return self
 
     def initialize_variables(self):
@@ -609,11 +596,15 @@ class SharedSSM(object):
                         path = 'plot/latent_state/' + log_name + '/epoch_{}'.format(epoch_no)
                         l_mean = forward_state[0];
                         l_cov = forward_state[1];
+                    
+                    # 如果你需要绘图，将此注释取消即可
                     # 将训练时的 output_mean 和 真实值进行比对 #(ssm_num ,bs , seq)
                     # batch_pred = sess.run(self.train_z_mean, feed_dict=feed_dict)
                     # plot_train_pred(path=self.train_log_path,targets=self.config.target, data=target_batch_input['past_target'], pred=batch_pred,
                     #                 batch=batch_no, epoch=epoch_no, plot_num=3 , plot_length=self.config.past_length
                     #                 , time_start=target_batch_input['start'], freq=self.config.freq)
+
+
                     epoch_loss += np.sum(batch_nll)
                     avg_epoch_loss = epoch_loss/((batch_no+1)*self.config.batch_size)
 
@@ -762,17 +753,7 @@ class SharedSSM(object):
                     [self.pred_z_mean_scaled[:,:bs] , self.pred_z_cov[:,:bs] ], feed_dict=feed_dict
                 )
 
-                # we put the result intput the analysis collection
-                prediction_analysis['l_mean'].append(
-                    np.transpose(batch_pred_l_mean ,[1,2,0,3])
-                ) #(ssm, bs, seq , dim_l)
-                prediction_analysis['l_cov'].append(
-                    np.transpose(batch_pred_l_cov , [1,2,0,3,4])
-                )
-                prediction_analysis['control'].append(batch_pred_u)#(ssm, bs, seq, dim_u)
-                ground_truth_scaled = np.divide(target_batch_complete['future_target'][:,:bs], np.expand_dims(z_scale , axis=2))
-                prediction_analysis['ground_truth'].append(ground_truth_scaled)
-                prediction_analysis['z_mean_scaled'].append(batch_pred_z_mean_scaled)
+              
 
                 # 以下两个变量主要用于绘图
                 # batch_ground_truth = np.concatenate(
@@ -794,23 +775,37 @@ class SharedSSM(object):
                 #                 plot_length=self.config.pred_length*5,
                 #                 time_start=target_batch_complete['start'],freq=self.config.freq
                 # )
+                
+                
+                # 存储预测值， ground_truth, latent state的信息
+                prediction_analysis['l_mean'].append(
+                    np.transpose(batch_pred_l_mean ,[1,2,0,3])
+                ) #(ssm, bs, seq , dim_l)
+                prediction_analysis['l_cov'].append(
+                    np.transpose(batch_pred_l_cov , [1,2,0,3,4])
+                )
+                prediction_analysis['control'].append(batch_pred_u)#(ssm, bs, seq, dim_u)
+                ground_truth_scaled = np.divide(target_batch_complete['future_target'][:,:bs], np.expand_dims(z_scale , axis=2))
+                prediction_analysis['ground_truth'].append(ground_truth_scaled)
+                prediction_analysis['z_mean_scaled'].append(batch_pred_z_mean_scaled)
 
-                 # TODO: 2020/10/12 暂时不存储，要取结果进行分析
-                # if self.config.num_samples == 1:
-                #     mean_pred = np.concatenate(
-                #         [batch_train_z , np.multiply(batch_pred_z_mean_scaled, np.expand_dims(z_scale , axis=2))]
-                #         , axis=2
-                #     )
-                #     model_result.append(mean_pred)
-                # else:
-                #     scale = np.expand_dims(z_scale,axis=2)#(ssm_num ,bs , dim_z) --> #(ssm_num ,bs , 1 , dim_z)
-                #     batch_pred_z_mean = np.multiply(scale , batch_pred_z_mean_scaled)
-                #     pred_samples = samples_with_mean_cov(batch_pred_z_mean , batch_pred_z_cov , self.config.num_samples)
-                #     # pred_samples = np.multiply(scale , pred_samples_scale)
-                #     model_result.append(pred_samples)
-                #     pass
 
-        #处理分析结果，指定目录
+                # 存储模型的最终输出结果
+                if self.config.num_samples == 1:
+                    mean_pred = np.concatenate(
+                        [batch_train_z , np.multiply(batch_pred_z_mean_scaled, np.expand_dims(z_scale , axis=2))]
+                        , axis=2
+                    )
+                    model_result.append(mean_pred)
+                else:
+                    scale = np.expand_dims(z_scale,axis=2)#(ssm_num ,bs , dim_z) --> #(ssm_num ,bs , 1 , dim_z)
+                    batch_pred_z_mean = np.multiply(scale , batch_pred_z_mean_scaled)
+                    pred_samples = samples_with_mean_cov(batch_pred_z_mean , batch_pred_z_cov , self.config.num_samples)
+                    # pred_samples = np.multiply(scale , pred_samples_scale)
+                    model_result.append(pred_samples)
+                    pass
+
+        #处理分析结果(analysis/)，指定目录
         for name , item in prediction_analysis.items():
             item = np.concatenate(item , axis=1)
             prediction_analysis[name] = item
@@ -825,14 +820,13 @@ class SharedSSM(object):
         
         
 
-        # 处理的是预测的结果
-        # TODO: 2020/10/12 暂时不存储，要取结果进行分析
-        # model_result = np.concatenate(model_result, axis=1) #(ssm_num ,bs, seq,num_samples,1)
-        # with open(model_result_path , 'wb') as fp:
-        #     pickle.dump(model_result , fp)
-        # if not os.path.exists(ground_truth_path):
-        #     with open(ground_truth_path , 'wb') as fp:
-        #         pickle.dump(ground_truth_result ,fp)
+        # 处理的是预测的结果(results/)
+        model_result = np.concatenate(model_result, axis=1) #(ssm_num ,bs, seq,num_samples,1)
+        with open(model_result_path , 'wb') as fp:
+            pickle.dump(model_result , fp)
+        if not os.path.exists(ground_truth_path):
+            with open(ground_truth_path , 'wb') as fp:
+                pickle.dump(ground_truth_result ,fp)
 
         return self
 
