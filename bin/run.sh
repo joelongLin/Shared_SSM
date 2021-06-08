@@ -26,7 +26,7 @@ epoch='100'
 past='90'
 pred='5'
 
-for ((i=1;i<=1;i=i+1))#! repettion
+for ((i=1;i<=6;i=i+1))#! repettion
 do
     python gluonts/lzl_shared_ssm/models/lstm_compared/run_lstm.py --target=$target --start=$start --timestep=$length --freq=$freq \
     --slice=$slice --batch_size=$batch_size --num_batches_per_epoch=$batch_num --epochs=$epoch --past_length=$past --pred_length=$pred \
