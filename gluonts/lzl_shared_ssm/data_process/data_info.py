@@ -18,23 +18,9 @@ datasets_info = {
         dim=1,
         aim=['close'],
     ),
-    "btc_diff": DatasetInfo(
-        name="btc_diff",
-        url=root + 'btc_diff.csv',
-        time_col='beijing_time',
-        dim=1,
-        aim=['close'],
-    ),
     "eth": DatasetInfo(
         name="eth",
         url=root + 'eth.csv',
-        time_col='beijing_time',
-        dim=1,
-        aim=['close'],  # 这样子写只是为了测试预处理程序是否强大
-    ),
-    "eth_diff": DatasetInfo(
-        name="eth_diff",
-        url=root + 'eth_diff.csv',
         time_col='beijing_time',
         dim=1,
         aim=['close'],  # 这样子写只是为了测试预处理程序是否强大
@@ -46,23 +32,9 @@ datasets_info = {
         dim=2,
         aim=['Open','Close'],
     ),
-    "gold_diff": DatasetInfo(
-        name="gold_diff",
-        url=root + 'GOLD_diff.csv',
-        time_col='Date',
-        dim=2,
-        aim=['Open','Close'],
-    ),
     "gold_lbma": DatasetInfo(
         name="gold_lbma",
         url=root + 'gold_lbma.csv',
-        time_col='Date',
-        dim=2,
-        aim=['USD(AM)', 'GBP(AM)'],
-    ),
-    "gold_lbma_diff": DatasetInfo(
-        name="gold_lbma_diff",
-        url=root + 'gold_lbma_diff.csv',
         time_col='Date',
         dim=2,
         aim=['USD(AM)', 'GBP(AM)'],
