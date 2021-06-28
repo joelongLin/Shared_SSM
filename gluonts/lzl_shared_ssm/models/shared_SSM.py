@@ -577,6 +577,12 @@ class SharedSSM(object):
                 for batch_no in it :
                     env_batch_input  = next(self.env_train_loader)
                     target_batch_input = next(self.target_train_loader)
+
+                    # To the reviewer#2 adding noise to the background information
+                    if self.config.env_noise !=0:
+                        env_batch_input['past_target'] = env_batch_input['past_target'] \
+                                + np.random.normal(loc = self.config.env_noise_mean, scale = self.config.env_noise, size =(self.config.batch_size, self.config.past_length, self.env_dim))
+
                     # print('第 ',batch_no,'的env_batch_input["past_target"]:',  env_batch_input['past_target'].shape)
                     feed_dict = {
                         self.placeholders['past_environment'] : env_batch_input['past_target'],
@@ -675,14 +681,16 @@ class SharedSSM(object):
                 print('whatever ! life is still fantastic !')
 
         #存放预测结果的容器
-        eval_result_root_path = 'evaluate/results/{}_length({})_slice({})_past({})_pred({})'.format(
+        eval_result_root_path = 'evaluate/results{}/{}_length({})_slice({})_past({})_pred({})'.format(
+            "" if self.config.env_noise==0 else "_noise",
             self.config.target.replace(',' ,'_'), self.config.timestep , self.config.slice ,self.config.past_length , self.config.pred_length)
         if not os.path.exists(eval_result_root_path):
             os.makedirs(eval_result_root_path)
         model_result = []; ground_truth_result =[];
 
         #存放隐状态和background结果的容器
-        eval_analysis_root_path = 'evaluate/analysis/{}_length({})_slice({})_past({})_pred({})'.format(
+        eval_analysis_root_path = 'evaluate/analysis{}/{}_length({})_slice({})_past({})_pred({})'.format(
+            "" if self.config.env_noise==0  else "_noise",
             self.config.target.replace(',' ,'_') ,self.config.timestep , self.config.slice ,self.config.past_length , self.config.pred_length)
         if not os.path.exists(eval_analysis_root_path):
             os.makedirs(eval_analysis_root_path)
@@ -699,7 +707,9 @@ class SharedSSM(object):
         model_result_path = os.path.join(eval_result_root_path,'{}.pkl'.format(
             result_prefix
             + (self.train_log_path.split('/')[-1] if hasattr(self, 'train_log_path') else self.config.reload_model)
-            + ('_num_samples(%d)'%(self.config.num_samples) if self.config.num_samples !=1 else '')
+            + ('_num_samples(%d)'%(self.config.num_samples) if self.config.num_samples !=1 else '' )
+            + ('_env_noise(%2f)'%(self.config.env_noise) if self.config.env_noise != 0 else '')
+            + ('_mean_noise(%2f)'%(self.config.env_noise_mean) if self.config.env_noise_mean != 0 else '')
         ))
         model_result_path = add_time_mark_to_file(model_result_path)
         print('结果保存在-->',model_result_path)
@@ -723,14 +733,21 @@ class SharedSSM(object):
             target_batch_input = target_batch[1]
             env_batch_input = env_batch[1]
             if target_batch_input != None and env_batch_input != None:
-                # 不重复收集
+                # 不重复产生ground truth
                 if not os.path.exists(ground_truth_path):
                     ground_truth_result.append(target_batch_input)
 
                 # 这里要注意，因为我的batch_size被固定了，所以，这里要添加一个对数量的补全
                 target_batch_complete , bs = complete_batch(batch = target_batch_input , batch_size = self.config.batch_size)
                 env_batch_complete , _ = complete_batch(batch=env_batch_input, batch_size=self.config.batch_size)
-                # np.zeros(env_batch_complete['past_target'].shape)  np.zeros(env_batch_complete['future_target'].shape)
+                
+                # To the reviewer#2 we add noise to the env at the prediction range
+                if self.config.env_noise !=0:
+                        env_batch_complete['past_target'] = env_batch_complete['past_target'] \
+                                + np.random.normal(loc = self.config.env_noise_mean, scale = self.config.env_noise, size =(self.config.batch_size, self.config.past_length, self.env_dim))
+                        env_batch_complete['future_target'] =  env_batch_complete['future_target'] \
+                                + np.random.normal(loc = self.config.env_noise_mean, scale = self.config.env_noise, size =(self.config.batch_size, self.config.pred_length, self.env_dim))
+                
                 feed_dict = {
                     self.placeholders['past_environment'] :  env_batch_complete['past_target'],
                     self.placeholders['past_env_observed'] : env_batch_complete['past_observed_values'],
