@@ -11,10 +11,13 @@
 * There are serveral baseline are use mxnet. This work get a lot of help from Amazon gluonts, you can use `pip install gluonts` to help you install major of packages
 
 ## Quick Start
-* First of all, you should checkout that every python script run under `gluonts/lzl_shared_ssm`
-* You Can use `bin/run_shared_ssm.sh` to quickly run our Shared State Space Model. Change dataset or Hyperparameter
-* Other baseline script are also put in the same folder and named as `bin/run_{BASELINE}.sh`
-* And then you can use `python evaluate/acc_result.py` to checkout accuracy or you can use `python evaluate/rmse_result.py` to checkout the rmse
+
+1. **use shell script to train models and make prediction** : 
+   * You Can use `bin/run_shared_ssm.sh` to quickly run our Shared State Space Model. Change dataset or Hyperparameter
+   *  Other baseline script are also put in the same folder and named as `bin/run_{BASELINE}.sh`
+2. **evaluate our result** :
+   * you can use `python evaluate/acc_result.py` to checkout accuracy or you can use `python evaluate/rmse_result.py` to checkout the rmse
+3. **debug with right working space** : you should checkout that every python script run under `gluonts/lzl_shared_ssm` if you want to `debug` our code.
 
 
 ## Models Source Code
