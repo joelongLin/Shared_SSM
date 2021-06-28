@@ -248,7 +248,7 @@ def plot_train_epoch_loss(
 ):
     epoches = list(result.keys())
     loss = list(result.values())
-    fig = plt.figure(figsize=(40,30))
+    fig = plt.figure(figsize=(16,12))
     ax = fig.add_subplot(1, 1, 1)
     ax.plot(epoches, loss, color='tab:blue' , marker='D')
 
@@ -267,7 +267,7 @@ def plot_train_epoch_loss(
     ax.set_title('epoch information when training' ,title_font )
     ax.xaxis.set_tick_params(labelsize=21)
     ax.yaxis.set_tick_params(labelsize=21)
-    plt.savefig(os.path.join(path , 'train_%s.png'%(time)))
+    plt.savefig(os.path.join(path , 'train_%s.pdf'%(time)),format="pdf")
     plt.close(fig)
 
 def complete_batch(batch,batch_size):
