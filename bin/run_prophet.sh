@@ -30,11 +30,11 @@ E_env='SX5E,DXY'
 # parser.add_argument('-s'  ,'--slice' , type = str , help = 'type of sliding dataset' , default='overlap')
 #! 换行的\符号，千万不要在后面带空格
 
-python gluonts/lzl_shared_ssm/models/prophet_compared/test_prophet.py -t=$target -st=$start -f=$freq -T=$length -pr=$pred -pa=$past -s=$slice &
+python gluonts/lzl_shared_ssm/models/prophet_compared/run_prophet.py -t=$target -st=$start -f=$freq -T=$length -pr=$pred -pa=$past -s=$slice &
 # with ENV
 for lags in 3 4 5 6 7
 do
-    for ((i=1;i<=1;i=i+1))#! repettion
+    for ((i=1;i<=;i=i+1))#! repettion
     do
         python gluonts/lzl_shared_ssm/models/prophet_compared/run_prophet_env.py --target=$target --start=$start --timestep=$length --freq=$freq \
         --slice=$slice --past=$past --pred=$pred --env=$env --lags=$lags &
@@ -42,11 +42,11 @@ do
 done
 
 
-python gluonts/lzl_shared_ssm/models/prophet_compared/test_prophet.py -t=$E_target -st=$E_start -f=$E_freq -T=$E_length -pr=$pred -pa=$past -s=$slice &
+python gluonts/lzl_shared_ssm/models/prophet_compared/run_prophet.py -t=$E_target -st=$E_start -f=$E_freq -T=$E_length -pr=$pred -pa=$past -s=$slice &
 # with ENV
 for lags in 3 4 5 6 7
 do
-    for ((i=1;i<=1;i=i+1))#! repettion
+    for ((i=1;i<=6;i=i+1))#! repettion
     do
         python gluonts/lzl_shared_ssm/models/prophet_compared/run_prophet_env.py --target=$E_target --start=$E_start --timestep=$E_length --freq=$E_freq \
         --slice=$slice --past=$past --pred=$pred --env=$E_env --lags=$lags &

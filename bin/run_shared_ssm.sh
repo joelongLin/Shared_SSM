@@ -1,8 +1,9 @@
 #!/bin/bash
-source activate gluonts
+
 # btc eth 数据集
-(90,5,13) (60,3,14) (30,1,15)
-logs_dir="logs/btc_eth(shared_ssm)"
+#(90,5,13) (60,3,14) (30,1,15)
+# Scale of the GOLD are relatively small,so the noise should be 1 to 2.5
+logs_dir="logs/btc_eth(shared_ssm_202106)"
 reload_model=''
 reload_time=''
 target="btc,eth"
@@ -15,9 +16,8 @@ slice='overlap'
 
 # indices 数据集
 #(30,1,81) (60,3,80) (90,5,79) ===> 2606
-#(30,1,89) (60,3,88) (90,5,87) ===> 2867
 # use_env='True'
-# logs_dir="logs/ukx_vix_spx_shsz_nky_train_overlap(shared_ssm)"
+# logs_dir="logs/ukx_vix_spx_shsz_nky_train_overlap(shared_ssm_202106)"
 # reload_model=''
 # reload_time=''
 # target="UKX,VIX,SPX,SHSZ300,NKY"
@@ -28,38 +28,34 @@ slice='overlap'
 # slice='overlap'
 
 
-past_length='30'
+past_length='60'
 prediction_length='3'
-batch_num='81'
+batch_num='14'
 batch_size='32'
 epochs='100'
 num_samples='100'
 #之前的版本u为10 l是5
 dim_u='5'
 dim_l='4'
-initializer="xavier"
-
+drop_prob='0.5'
+lr='0.001'
 
 
 #USE FOR TRAINIG
-for K in 2
+for K in 3
 do
-  for maxlags in 3 4 5 6 7
+  for maxlags in 3 
   do
-    for ((i=1;i<=3;i=i+1))#! repettion
+    for ((i=1;i<=6;i=i+1))#! repettion
     do
-        for drop_prob in 0.5
+      for env_noise in 1 1.5 2 2.5
         do
-            for lr in 0.001
-            do
-            python gluonts/lzl_shared_ssm/run_shared_ssm.py --reload_model=$reload_model --reload_time=$reload_time --logs_dir=$logs_dir \
-            --dropout_rate=$drop_prob --learning_rate=$lr --target=$target --environment=$environment --maxlags=$maxlags \
-            --start=$start --timestep=$timestep --past_length=$past_length --pred_length=$prediction_length \
-            --slice=$slice --batch_size=$batch_size --num_batches_per_epoch=$batch_num --epochs=$epochs \
-            --use_env=$use_env --num_samples=$num_samples --freq=$freq --dim_l=$dim_l --dim_u=$dim_u --K=$K \
-            --initializer=$initializer 
-          
-            done
+          python gluonts/lzl_shared_ssm/run_shared_ssm.py --reload_model=$reload_model --reload_time=$reload_time --logs_dir=$logs_dir \
+          --dropout_rate=$drop_prob --learning_rate=$lr --target=$target --environment=$environment --maxlags=$maxlags \
+          --start=$start --timestep=$timestep --past_length=$past_length --pred_length=$prediction_length \
+          --slice=$slice --batch_size=$batch_size --num_batches_per_epoch=$batch_num --epochs=$epochs \
+          --use_env=$use_env --num_samples=$num_samples --freq=$freq --dim_l=$dim_l --dim_u=$dim_u --K=$K \
+          --env_noise=$env_noise --env_noise_mean=0.1
         done
     done
   done
