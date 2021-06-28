@@ -4,6 +4,7 @@ import pickle
 import heapq
 import matplotlib.pyplot as plt
 import os
+import sys
 if '/evaluate' in os.getcwd():
     os.chdir('../')
 if '/lzl_shared_ssm' not in os.getcwd():
@@ -12,28 +13,33 @@ if '/lzl_shared_ssm' not in os.getcwd():
 models = ['shared_ssm',
  'shared_ssm_no_sample',
  'shared_ssm_without_env' ,
-  'prophet' ,'common_lstm',
-   'arima','deep_state' ,'deepar',
+  'prophet' ,'common_lstm'
+  ,'deep_state' ,'deepar',
     'DEEPAR', 'DEEPSTATE', 'PROPHET']
 #('btc,eth' ,503)
 #("UKX,VIX,SPX,SHSZ300,NKY" ,2867)
 #("UKX,VIX,SPX,SHSZ300,NKY" , train, 2606)
-past_length = 90
+past_length = 60
 pred_length = 3
-length = 2606
-#length = 503 
+# length = 2606
+length = 503 
 slice_type = 'overlap'
-target = 'UKX,VIX,SPX,SHSZ300,NKY'
-#target = "btc,eth"
-#! 记住在前后都加入下划线
-init = "_xavier_"
+# target = 'UKX,VIX,SPX,SHSZ300,NKY'
+target = "btc,eth"
 
 # Shared ssm 专属的超参
 dim_l = 4
-K = 5
+K = 3
 dim_u = 5
 bs = 32;
-lags = 7
+lags = 3
+
+check_noise = ""
+if(len(sys.argv) >= 2):
+    check_noise = sys.argv[1]
+eval_result_root = 'evaluate/results{}/{}_length({})_slice({})_past({})_pred({})'.format(
+  "_" + check_noise, target.replace(',' , '_') , length , slice_type, past_length , pred_length
+)
 
 #! 在这里修改 RMSE 的函数
 # 维度分别是(ssm_num, bs, sq_len)
@@ -44,9 +50,6 @@ def calculate_accuracy(real, predict):
     return res*100
 
 
-eval_result_root = 'evaluate/results/{}_length({})_slice({})_past({})_pred({})'.format(
-  target.replace(',' , '_') , length , slice_type, past_length , pred_length
-)
 
 print('current evaluate root path : ' , eval_result_root)
 
@@ -80,15 +83,14 @@ if __name__ == "__main__":
     shared_ssm_without_env_result = []
     common_lstm_result = []
     prophet_result  = []
-    arima_result = []
+
     deepar_result = []
     DEEPAR_result = []
     DEEPSTATE_result = []
     PROPHET_result = []
 
-    for path in os.listdir(eval_result_root):
-
-        shared_ssm_con = ('shared_ssm' + init) in path
+    for path in sorted(os.listdir(eval_result_root)):
+        shared_ssm_con = ('shared_ssm') in path
         shared_ssm_con_2 = 'num_samples' in path
         #超参选择
         shared_ssm_con_3 = 'lags({})'.format(lags) in path \
@@ -96,6 +98,9 @@ if __name__ == "__main__":
         and 'l({})'.format(dim_l) in path \
         and 'bs({})'.format(bs) in path \
         and 'K({})'.format(K) in path
+        
+        # help to know how to
+        #print(path + "," + str(shared_ssm_con) + "," + str(shared_ssm_con_2) + "," + str(shared_ssm_con_3))
         
         if shared_ssm_con and shared_ssm_con_2 and shared_ssm_con_3 :
             print('shared ssm sample with mean and covariance -->' , path)
@@ -269,8 +274,6 @@ if __name__ == "__main__":
             acc_result[model] = common_lstm_result
         if model == 'prophet':
             acc_result[model] = prophet_result
-        if model == 'arima':
-            acc_result[model] = arima_result
         if model == 'deepar':
             acc_result[model] = deepar_result
         if model == 'DEEPAR':

@@ -4,6 +4,7 @@ import pickle
 import heapq
 import matplotlib.pyplot as plt
 import os
+import sys
 if '/evaluate' in os.getcwd():
     os.chdir('../')
 if '/lzl_shared_ssm' not in os.getcwd():
@@ -12,23 +13,31 @@ if '/lzl_shared_ssm' not in os.getcwd():
 models = ['shared_ssm',
  'shared_ssm_no_sample',
  'shared_ssm_without_env' ,
-  'prophet' ,'common_lstm',
-   'arima','deep_state' ,'deepar']
-#('btc,eth' ,530)
-#("UKX,VIX,SPX,SHSZ300,NKY" ,2867)
-past_length = 30
-pred_length = 1
-length = 2867
+  'prophet' ,'common_lstm'
+  ,'deep_state' ,'deepar']
+#('btc,eth' ,503)
+#("UKX,VIX,SPX,SHSZ300,NKY" ,2606)
+past_length = 60
+pred_length = 3
+#length = 2606
+length = 503
 slice_type = 'overlap'
-target = 'UKX,VIX,SPX,SHSZ300,NKY'
-# target = "btc,eth"
+# target = 'UKX,VIX,SPX,SHSZ300,NKY'
+target = "btc,eth"
 
 # Shared ssm 专属的超参
 dim_l = 4
-K = 2;
+K = 3;
 dim_u = 5
 bs = 32;
-lags = 2;
+lags = 3;
+
+check_noise = ""
+if(len(sys.argv) >= 2):
+    check_noise = sys.argv[1]
+eval_result_root = 'evaluate/results{}/{}_length({})_slice({})_past({})_pred({})'.format(
+  "_" + check_noise, target.replace(',' , '_') , length , slice_type, past_length , pred_length
+)
 
 
 def calculate_accuracy(real, predict):
@@ -36,11 +45,6 @@ def calculate_accuracy(real, predict):
     predict = np.array(predict) + 1
     percentage = 1 - np.sqrt(np.nanmean(np.square((real - predict) / real)))
     return percentage * 100
-
-
-eval_result_root = 'evaluate/results/{}_length({})_slice({})_past({})_pred({})'.format(
-  target.replace(',' , '_') , length , slice_type, past_length , pred_length
-)
 
 print('current evaluate root path : ' , eval_result_root)
 
@@ -74,10 +78,9 @@ if __name__ == "__main__":
     shared_ssm_without_env_result = []
     common_lstm_result = []
     prophet_result  = []
-    arima_result = []
     deepar_result = []
 
-    for path in os.listdir(eval_result_root):
+    for path in sorted(os.listdir(eval_result_root)):
 
         shared_ssm_con = 'shared_ssm' in path
         shared_ssm_con_2 = 'num_samples' in path
@@ -180,18 +183,6 @@ if __name__ == "__main__":
                 prophet_result.append(acc)
                 continue
         
-        elif 'arima' in path:
-            with open(os.path.join(eval_result_root, path), 'rb') as fp:
-                single_result = pickle.load(fp)
-                # mse = np.nanmean(np.square(np.mean(single_result, 2) - ground_truth_target[:, :, -pred_length:]))
-                acc = calculate_accuracy(
-                    real=ground_truth_target[:, :, -pred_length:],
-                    predict=np.mean(single_result, 2) if len(single_result.shape)==4 else single_result
-                )
-                acc = np.round(acc, 2)
-
-                arima_result.append(acc)
-                continue
         
         elif 'deepar' in path:
             with open(os.path.join(eval_result_root, path), 'rb') as fp:
@@ -229,11 +220,11 @@ if __name__ == "__main__":
             mse_result[model] = common_lstm_result
         if model == 'prophet':
             mse_result[model] = prophet_result
-        if model == 'arima':
-            mse_result[model] = arima_result
         if model == 'deepar':
             mse_result[model] = deepar_result
     print('---acc 指标结果 ---')
     for key, value in mse_result.items():
-        print(key , '\n' , value)
+        print(key)
+        for i in value:
+            print("   ", i);
     print('---acc 指标完 ---')
