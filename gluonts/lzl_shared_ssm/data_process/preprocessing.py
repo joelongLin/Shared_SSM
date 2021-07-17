@@ -29,14 +29,17 @@ import argparse
 from data_info import datasets_info,DatasetInfo
 
 parser = argparse.ArgumentParser(description="data")
-parser.add_argument('-st' ,'--start' , type=str , help='数据集开始的时间', default='2017-01-02')
-parser.add_argument('-d','--dataset', type=str, help='需要重新生成的数据的名称',default='COMEX_Silver')
-parser.add_argument('-t','--train_length', type=int, help='数据集训练长度', default=90)
+parser.add_argument('-st' ,'--start' , type=str , help='数据集开始的时间', default='2013-04-15 12:00:00')
+parser.add_argument('-d','--dataset', type=str, help='需要重新生成的数据的名称',default="pressure")
+parser.add_argument('-t','--train_length', type=int, help='数据集训练长度', default=60)
 parser.add_argument('-p'  ,'--pred_length' , type = int , help = '需要预测的长度' , default=5)
 parser.add_argument('-s'  ,'--slice' , type = str , help = '需要预测的长度' , default='overlap')
-parser.add_argument('-n' , '--num_time_steps' , type=int  , help='时间步的数量' , default=782)
-parser.add_argument('-f' , '--freq' , type=str  , help='时间间隔' , default='1B')
+parser.add_argument('-n' , '--num_time_steps' , type=int  , help='时间步的数量' , default=1177)
+parser.add_argument('-f' , '--freq' , type=str  , help='时间间隔' , default='1H')
 args = parser.parse_args()
+# change "_"  in start
+if("_" in args.start):
+    args.start = args.start.replace("_", " ")
 
 # 切割完之后， 除了目标序列target_slice 之外
 # 我去掉了DeepState 里面的 feat_static_cat, 因为真的不用给样本进行编号
@@ -111,24 +114,16 @@ def load_finance_from_csv(ds_info):
     # TODO: 这里要注意不够 general 只在适合 freq='D' 或者 freq = 'B' 的情况
     if 'D' in args.freq or 'B' in args.freq:
         url_series[time_str] = pd.to_datetime(url_series[time_str].dt.date)
+    # 对于小时来说需要额外处理
+    else: 
+        url_series[time_str] = pd.to_datetime(url_series[time_str])
 
     url_series.set_index(time_str, inplace=True)
+    print("start : " , series_start)
+    print("end : " , series_end)
     url_series = url_series.loc[series_start:series_end][aim]
 
-    # NOTE: statistic the misssing date
-    expected_date = pd.date_range(start=series_start, periods=args.num_time_steps, freq=series_start.freq)
-    missing_date = []
-    for i in expected_date:
-        if i not in url_series.index:
-            missing_date.append(i)
-    print("==========missing day num:", len(missing_date) ,"======")
-    import holidays
-    UK_holidays = holidays.UK()
-    US_holidays = holidays.US()
-    for day in missing_date:
-        print('missing : ', day , ' dayofweek' , day.isoweekday() ,' holidayofUS' , US_holidays.get(day))
-    
-
+    # 填充额外的数据
     if url_series.shape[0] < args.num_time_steps:
         # 添加缺失的时刻(比如周末数据缺失这样的)
         index = pd.date_range(start=series_start, periods=args.num_time_steps, freq=series_start.freq)
