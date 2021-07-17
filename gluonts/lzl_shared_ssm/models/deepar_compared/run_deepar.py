@@ -28,6 +28,9 @@ parser.add_argument('-bs'  ,'--batch_size' , type = int , help = 'batch size' , 
 parser.add_argument('-bn'  ,'--batch_num' , type = int , help = 'batch number per epoch' , default=15)
 parser.add_argument('-ep'  ,'--epochs' , type = int , help = 'epochs to train' , default=100)
 args = parser.parse_args()
+# change "_"  in start
+if("_" in args.start):
+    args.start = args.start.replace("_", " ")
 
 item = args.target
 start = args.start

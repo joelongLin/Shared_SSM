@@ -55,10 +55,10 @@ def main(_):
     configuration = tf.compat.v1.ConfigProto()
     configuration.gpu_options.allow_growth = True
     with tf.compat.v1.Session(config=configuration) as sess:
-        dssm = Common_LSTM(config=config, sess=sess)\
+        common_lstm = Common_LSTM(config=config, sess=sess)\
             .build_module().build_train_forward().build_predict_forward().initialize_variables()
-        dssm.train()
-        dssm.predict()
+        common_lstm.train()
+        common_lstm.predict()
 
 
 

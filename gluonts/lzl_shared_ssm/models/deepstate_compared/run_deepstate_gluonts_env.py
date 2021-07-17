@@ -38,6 +38,9 @@ args = parser.parse_args()
 
 item = args.target
 start = args.start
+# change "_"  in start
+if("_" in start):
+    start = start.replace("_", " ")
 freq = args.freq
 timestep = args.timestep
 pred = args.pred
@@ -88,6 +91,7 @@ if __name__ == '__main__':
     #! 我们使用DEEPSTATE(大写) 代表添加了背景信息的deepstate
     forecast_result_saved_path = os.path.join(result_root_path,'DEEPSTATE_'  + result_params + '.pkl')
     forecast_result_saved_path = add_time_mark_to_file(forecast_result_saved_path)
+    print('deepstate env 的预测结果保存在-->', forecast_result_saved_path)
 
     # 目标序列的数据路径
     target_path = {ds_name: ds_name_prefix.format(
@@ -100,7 +104,7 @@ if __name__ == '__main__':
         if not os.path.exists(path):
             print(name, "创建中...")
             print(os.getcwd())
-            command = "python data_process/preprocessing_env.py --start {} --dataset {} --train_length {} --pred_length {} --slice {} --num_time_steps {} --freq {} --env {} --lags {}".format( start, name, past, pred, slice_style, timestep, freq, env, lags)
+            command = "python data_process/preprocessing_env.py --start {} --dataset {} --train_length {} --pred_length {} --slice {} --num_time_steps {} --freq {} --env {} --lags {}".format( args.start, name, past, pred, slice_style, timestep, freq, env, lags)
             print(command)
             os.system(command)
         else:
@@ -172,6 +176,5 @@ if __name__ == '__main__':
         )
 
         sample_forecasts = np.concatenate(sample_forecasts, axis=0)#(ssm_num , bs , num_samples, 1)
-        print('把预测结果保存在-->', forecast_result_saved_path)
         with open(forecast_result_saved_path , 'wb') as fp:
             pickle.dump(sample_forecasts , fp)

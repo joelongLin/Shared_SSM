@@ -25,6 +25,10 @@ parser.add_argument('-pa'  ,'--past' , type = int , help = 'length of training r
 parser.add_argument('-s'  ,'--slice' , type = str , help = 'type of sliding dataset' , default='nolap')
 args = parser.parse_args()
 
+# change "_"  in start
+if("_" in args.start):
+    args.start = args.start.replace("_", " ")
+
 target = args.target
 start = args.start
 freq = args.freq

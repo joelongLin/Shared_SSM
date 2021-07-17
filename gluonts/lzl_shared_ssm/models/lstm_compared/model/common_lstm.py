@@ -41,6 +41,10 @@ class Common_LSTM(object):
         else:
             series = 1
             print('当前序列数量为',series ,',是单长序列的情形')
+        
+        # change "_" in self.config.start
+        self.config.start = self.config.start.replace("_", " ")
+
         # 目标序列的数据路径
         target_path = {name:name_prefix.format(
             '%s_start(%s)_freq(%s)'%(name, self.config.start ,self.config.freq), '%s_DsSeries_%d' % (self.config.slice, series),

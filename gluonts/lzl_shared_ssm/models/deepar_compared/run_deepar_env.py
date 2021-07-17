@@ -35,6 +35,9 @@ args = parser.parse_args()
 
 item = args.target
 start = args.start
+# change "_"  in start
+if("_" in start):
+    start = start.replace("_", " ")
 freq = args.freq
 timestep = args.timestep
 pred = args.pred
@@ -86,7 +89,7 @@ if __name__ == '__main__':
         if not os.path.exists(path):
             print(name, "创建中...")
             print(os.getcwd())
-            command = "python data_process/preprocessing_env.py --start {} --dataset {} --train_length {} --pred_length {} --slice {} --num_time_steps {} --freq {} --env {} --lags {}".format( start, name, past, pred, slice_style, timestep, freq, env, lags)
+            command = "python data_process/preprocessing_env.py --start {} --dataset {} --train_length {} --pred_length {} --slice {} --num_time_steps {} --freq {} --env {} --lags {}".format( args.start, name, past, pred, slice_style, timestep, freq, env, lags)
             print(command)
             os.system(command)
         else:

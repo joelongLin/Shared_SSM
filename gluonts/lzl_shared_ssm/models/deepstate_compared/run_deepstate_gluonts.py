@@ -36,6 +36,9 @@ args = parser.parse_args()
 
 item = args.target
 start = args.start
+# change "_"  in start
+if("_" in start):
+    start = start.replace("_", " ")
 freq = args.freq
 timestep = args.timestep
 pred = args.pred
@@ -79,29 +82,23 @@ if __name__ == '__main__':
     result_root_path  = 'evaluate/results/{}_length({})_slice({})_past({})_pred({})'.format(item.replace(',' ,'_'), timestep , slice_style ,past , pred)
     if not os.path.exists(result_root_path):
         os.makedirs(result_root_path)
-    #! 我们使用DEEPSTATE(大写) 代表添加了背景信息的deepstate
-    forecast_result_saved_path = os.path.join(result_root_path,'DEEPSTATE_'  + result_params + '.pkl')
+    forecast_result_saved_path = os.path.join(result_root_path,'deepstate__'  + result_params + '.pkl')
     forecast_result_saved_path = add_time_mark_to_file(forecast_result_saved_path)
-
+    print('deepstate 的预测结果保存在-->', forecast_result_saved_path)
+    
     # 目标序列的数据路径
     target_path = {ds_name: ds_name_prefix.format(
         '%s_start(%s)_freq(%s)' % (ds_name, start,freq), '%s_DsSeries_%d' % (slice_style, series),
         'train_%d' % past, 'pred_%d' % (pred)
     ) for ds_name in item.split(',')}
 
-    # parser.add_argument('-st' ,'--start' , type=str , help='数据集开始的时间', default='2017-01-02')
-    # parser.add_argument('-d','--dataset', type=str, help='需要重新生成的数据的名称',default='COMEX_Silver')
-    # parser.add_argument('-t','--train_length', type=int, help='数据集训练长度', default=90)
-    # parser.add_argument('-p'  ,'--pred_length' , type = int , help = '需要预测的长度' , default=5)
-    # parser.add_argument('-s'  ,'--slice' , type = str , help = '需要预测的长度' , default='overlap')
-    # parser.add_argument('-n' , '--num_time_steps' , type=int  , help='时间步的数量' , default=782)
-    # parser.add_argument('-f' , '--freq' , type=str  , help='时间间隔' , default='1B')
+    
     for name in target_path:
         path = target_path[name]
         if not os.path.exists(path):
             print(name, "创建中...")
             print(os.getcwd())
-            command = "python data_process/preprocessing.py --start {} --dataset {} --train_length {} --pred_length {} --slice {} --num_time_steps {} --freq {}".format( start, name, past, pred, slice_style, timestep, freq)
+            command = "python data_process/preprocessing.py --start {} --dataset {} --train_length {} --pred_length {} --slice {} --num_time_steps {} --freq {}".format( args.start, name, past, pred, slice_style, timestep, freq)
             print(command)
             os.system(command)
         else:
@@ -157,8 +154,8 @@ if __name__ == '__main__':
             predictor=deepstate_predictor,  # predictor
             num_samples=100,  # number of sample paths we want for evaluation
         )
-
-            
+        
+                    
         sample_forecasts = np.concatenate(
             [np.expand_dims(forecast.samples , axis=0) for forecast in forecast_it] 
             , axis = 0
@@ -173,6 +170,5 @@ if __name__ == '__main__':
         )
 
         sample_forecasts = np.concatenate(sample_forecasts, axis=0)#(ssm_num , bs , num_samples, 1)
-        print('把预测结果保存在-->', forecast_result_saved_path)
         with open(forecast_result_saved_path , 'wb') as fp:
             pickle.dump(sample_forecasts , fp)
