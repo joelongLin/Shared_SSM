@@ -32,147 +32,6 @@ datasets_info = {
         dim=2,
         aim=['Open','Close'],
     ),
-    "gold_lbma": DatasetInfo(
-        name="gold_lbma",
-        url=root + 'gold_lbma.csv',
-        time_col='Date',
-        dim=2,
-        aim=['USD(AM)', 'GBP(AM)'],
-    ),
-    "LMEAluminium": DatasetInfo(
-        name="Aluminium",
-        url=[
-            root + 'SIGIR/Train/Train_data/LMEAluminium3M_train.csv' , 
-            root + 'SIGIR/Validation/Validation_data/LMEAluminium3M_validation.csv',
-            root + 'SIGIR/Test/Test_data/LMEAluminium3M_test.csv'
-        ],
-        time_col='Unnamed: 0.1',
-        index_col=0,
-        dim=1,
-        aim=['Close.Price'],
-    ),
-    "LMECopper": DatasetInfo(
-        name="Copper",
-        url= [
-            root + 'SIGIR/Train/Train_data/LMECopper3M_train.csv', 
-            root + 'SIGIR/Validation/Validation_data/LMECopper3M_validation.csv',
-            root + 'SIGIR/Test/Test_data/LMECopper3M_test.csv'
-        ],
-        time_col='Unnamed: 0.1',
-        index_col=0,
-        dim=1,
-        aim=['Close.Price'],
-    ),
-    "LMELead": DatasetInfo(
-        name="Lead",
-        url=[
-            root + 'SIGIR/Train/Train_data/LMELead3M_train.csv', 
-            root + 'SIGIR/Validation/Validation_data/LMELead3M_validation.csv',
-            root + 'SIGIR/Test/Test_data/LMELead3M_test.csv'
-        ],
-        time_col='Unnamed: 0.1',
-        index_col=0,
-        dim=1,
-        aim=['Close.Price'],
-    ),
-    "LMENickel": DatasetInfo(
-        name="Nickel",
-        url=[
-            root + 'SIGIR/Train/Train_data/LMENickel3M_train.csv',
-            root +'SIGIR/Validation/Validation_data/LMENickel3M_validation.csv',
-            root +'SIGIR/Test/Test_data/LMENickel3M_test.csv'
-        ],
-        time_col='Unnamed: 0.1',
-        index_col=0,
-        dim=1,
-        aim=['Close.Price'],
-    ),
-    "LMETin": DatasetInfo(
-        name="Tin",
-        url=[
-            root + 'SIGIR/Train/Train_data/LMETin3M_train.csv' , 
-            root + 'SIGIR/Validation/Validation_data/LMETin3M_validation.csv',
-            root + 'SIGIR/Test/Test_data/LMETin3M_test.csv',
-        ],
-        time_col='Unnamed: 0.1',
-        index_col=0,
-        dim=1,
-        aim=['Close.Price'],
-    ),
-    "LMEZinc": DatasetInfo(
-        name="Zinc",
-        url=[
-            root + 'SIGIR/Train/Train_data/LMEZinc3M_train.csv' , 
-            root + 'SIGIR/Validation/Validation_data/LMEZinc3M_validation.csv',
-            root + 'SIGIR/Test/Test_data/LMEZinc3M_test.csv'
-        ],
-        time_col='Unnamed: 0.1',
-        index_col=0,
-        dim=1,
-        aim=['Close.Price'],
-    ),
-        
-    "comexCopper": DatasetInfo(
-        name="COMEX_Copper",
-        url=[
-            root + 'SIGIR/Train/Train_data/COMEX_Copper_train.csv' , 
-            root + 'SIGIR/Validation/Validation_data/COMEX_Copper_validation.csv',
-            root + 'SIGIR/Test/Test_data/COMEX_Copper_test.csv'
-        ],
-        time_col='Unnamed: 0.1',
-        index_col=0,
-        dim=1,
-        aim=['Close'],
-    ),
-    "comexGold": DatasetInfo(
-        name="COMEX_Gold",
-        url=[
-            root + 'SIGIR/Train/Train_data/COMEX_Gold_train.csv' , 
-            root + 'SIGIR/Validation/Validation_data/COMEX_Gold_validation.csv',
-            root + 'SIGIR/Test/Test_data/COMEX_Gold_test.csv'
-        ],
-        time_col='Unnamed: 0.1',
-        index_col=0,
-        dim=1,
-        aim=['Close'],
-
-    ),
-    "comexPalladium":DatasetInfo(
-        name="COMEX_Palladium",
-        url=[
-            root + 'SIGIR/Train/Train_data/COMEX_Palladium_train.csv' , 
-            root + 'SIGIR/Validation/Validation_data/COMEX_Palladium_validation.csv',
-            root + 'SIGIR/Test/Test_data/COMEX_Palladium_test.csv'
-        ],
-        time_col='Unnamed: 0.1',
-        index_col=0,
-        dim=1,
-        aim=['Close'],
-    ),
-    "comexPlatinum":DatasetInfo(
-        name="COMEX_Platinum",
-        url=[
-            root + 'SIGIR/Train/Train_data/COMEX_Platinum_train.csv' , 
-            root + 'SIGIR/Validation/Validation_data/COMEX_Platinum_validation.csv',
-            root + 'SIGIR/Test/Test_data/COMEX_Platinum_test.csv'
-        ],
-        time_col='Unnamed: 0.1',
-        index_col=0,
-        dim=1,
-        aim=['Close'],
-    ),
-    "comexSilver":DatasetInfo(
-        name="COMEX_Silver",
-        url=[
-            root + 'SIGIR/Train/Train_data/COMEX_Silver_train.csv' , 
-            root + 'SIGIR/Validation/Validation_data/COMEX_Silver_validation.csv',
-            root + 'SIGIR/Test/Test_data/COMEX_Silver_test.csv'
-        ],
-        time_col='Unnamed: 0.1',
-        index_col=0,
-        dim=1,
-        aim=['Close'],
-    ),
     # Indices_NKY Index_train.csv
     # Indices_SHSZ300 Index_train.csv
     # Indices_SPX Index_train.csv
@@ -235,5 +94,61 @@ datasets_info = {
         dim=1,
         aim=['VIX'],
     ),
-    
+    "PM25":DatasetInfo(
+        name="PM25",
+        url=root + 'SH_weather.txt' , 
+        time_col='time',
+        index_col=None,
+        dim=1,
+        aim=['PM25_AQI_value'],
+    ),
+    "PM10":DatasetInfo(
+        name="PM10",
+        url=root + 'SH_weather.txt' , 
+        time_col='time',
+        index_col=None,
+        dim=1,
+        aim=['PM10_AQI_value'],
+    ),
+    "NO2":DatasetInfo(
+        name="NO2",
+        url=root + 'SH_weather.txt' , 
+        time_col='time',
+        index_col=None,
+        dim=1,
+        aim=['NO2_AQI_value'],
+    ),
+    "temperature":DatasetInfo(
+        name="temperature",
+        url=root + 'SH_weather.txt' , 
+        time_col='time',
+        index_col=None,
+        dim=1,
+        aim=['temperature'],
+    ),
+    "pressure":DatasetInfo(
+        name="pressure",
+        url=root + 'SH_weather.txt' , 
+        time_col='time',
+        index_col=None,
+        dim=1,
+        aim=['pressure'],
+    ),
+    "humidity":DatasetInfo(
+        name="humidity",
+        url=root + 'SH_weather.txt' , 
+        time_col='time',
+        index_col=None,
+        dim=1,
+        aim=['humidity'],
+    ),
+    "wind":DatasetInfo(
+        name="wind",
+        url=root + 'SH_weather.txt' , 
+        time_col='time',
+        index_col=None,
+        dim=1,
+        aim=['wind'],
+    ),
+
 }

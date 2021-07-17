@@ -41,6 +41,9 @@ parser.add_argument('-s'  ,'--slice' , type = str , help = '需要预测的长�
 parser.add_argument('-n' , '--num_time_steps' , type=int  , help='时间步的数量' , default=503)
 parser.add_argument('-f' , '--freq' , type=str  , help='时间间隔' , default='1D')
 args = parser.parse_args()
+# change "_"  in start
+if("_" in args.start):
+    args.start = args.start.replace("_", " ")
 
 # 切割完之后， 除了目标序列target_slice 之外
 # 此方法用于 stride = 1, 完全滑动窗口
