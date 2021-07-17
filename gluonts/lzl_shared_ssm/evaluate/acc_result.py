@@ -14,14 +14,18 @@ models = ['shared_ssm',
  'shared_ssm_no_sample',
  'shared_ssm_without_env' ,
   'prophet' ,'common_lstm'
-  ,'deep_state' ,'deepar']
+  ,'deep_state' ,'deepar'
+  ,'DEEPAR', 'DEEPSTATE', 'PROPHET']
 #('btc,eth' ,503)
 #("UKX,VIX,SPX,SHSZ300,NKY" ,2606)
 past_length = 60
 pred_length = 3
+slice_type = 'overlap'
+
+#length = 1172
 #length = 2606
 length = 503
-slice_type = 'overlap'
+#target = 'PM25,PM10,NO2'
 # target = 'UKX,VIX,SPX,SHSZ300,NKY'
 target = "btc,eth"
 
@@ -36,7 +40,7 @@ check_noise = ""
 if(len(sys.argv) >= 2):
     check_noise = sys.argv[1]
 eval_result_root = 'evaluate/results{}/{}_length({})_slice({})_past({})_pred({})'.format(
-  "_" + check_noise, target.replace(',' , '_') , length , slice_type, past_length , pred_length
+  "" if check_noise=="" else "_" + check_noise, target.replace(',' , '_') , length , slice_type, past_length , pred_length
 )
 
 
@@ -79,6 +83,9 @@ if __name__ == "__main__":
     common_lstm_result = []
     prophet_result  = []
     deepar_result = []
+    DEEPAR_result = []
+    DEEPSTATE_result = []
+    PROPHET_result = []
 
     for path in sorted(os.listdir(eval_result_root)):
 
@@ -196,6 +203,53 @@ if __name__ == "__main__":
 
                 deepar_result.append(acc)
                 continue
+        
+        elif 'DEEPAR' in path:
+            with open(os.path.join(eval_result_root, path), 'rb') as fp:
+                if "lag({})".format(lags) not in path:
+                    continue;
+                single_result = pickle.load(fp)
+                # mse = np.nanmean(np.square(np.mean(single_result, 2) - ground_truth_target[:, :, -pred_length:]))
+                acc = calculate_accuracy(
+                    real=ground_truth_target[:, :, -pred_length:],
+                    predict=np.mean(single_result, 2) if len(single_result.shape)==4 else single_result
+                )
+                acc = np.round(acc, 2)
+
+                DEEPAR_result.append(acc)
+                continue
+        
+        elif 'DEEPSTATE' in path:
+            with open(os.path.join(eval_result_root, path), 'rb') as fp:
+                if "lag({})".format(lags) not in path:
+                    continue;
+                single_result = pickle.load(fp)
+                # mse = np.nanmean(np.square(np.mean(single_result, 2) - ground_truth_target[:, :, -pred_length:]))
+                acc = calculate_accuracy(
+                    real=ground_truth_target[:, :, -pred_length:],
+                    predict=np.mean(single_result, 2) if len(single_result.shape)==4 else single_result
+                )
+                acc = np.round(acc, 2)
+
+                DEEPSTATE_result.append(acc)
+                continue
+        
+        elif 'PROPHET' in path:
+            with open(os.path.join(eval_result_root, path), 'rb') as fp:
+                if "lag({})".format(lags) not in path:
+                    continue;
+                single_result = pickle.load(fp)
+                # mse = np.nanmean(np.square(np.mean(single_result, 2) - ground_truth_target[:, :, -pred_length:]))
+                acc = calculate_accuracy(
+                    real=ground_truth_target[:, :, -pred_length:],
+                    predict=np.mean(single_result, 2) if len(single_result.shape)==4 else single_result
+                )
+                acc = np.round(acc, 2)
+
+                PROPHET_result.append(acc)
+                continue
+        
+    
 
 
         else:
@@ -205,25 +259,31 @@ if __name__ == "__main__":
 
 
 
-    mse_result = {}
+    acc_result = {}
     # top_num = 12
     for model in models:
         if model == 'shared_ssm':
-            mse_result[model] = shared_ssm_result
+            acc_result[model] = shared_ssm_result
         if model == 'shared_ssm_no_sample':
-            mse_result[model] = shared_ssm_no_sample
+            acc_result[model] = shared_ssm_no_sample
         if model == 'deep_state':
-            mse_result[model] =  deep_state_result
+            acc_result[model] =  deep_state_result
         if model  == 'shared_ssm_without_env' :
-            mse_result[model] = shared_ssm_without_env_result
+            acc_result[model] = shared_ssm_without_env_result
         if model == 'common_lstm':
-            mse_result[model] = common_lstm_result
+            acc_result[model] = common_lstm_result
         if model == 'prophet':
-            mse_result[model] = prophet_result
+            acc_result[model] = prophet_result
         if model == 'deepar':
-            mse_result[model] = deepar_result
+            acc_result[model] = deepar_result
+        if model == 'DEEPAR':
+            acc_result[model] = DEEPAR_result
+        if model == 'DEEPSTATE':
+            acc_result[model] = DEEPSTATE_result
+        if model == 'PROPHET':
+            acc_result[model] = PROPHET_result
     print('---acc 指标结果 ---')
-    for key, value in mse_result.items():
+    for key, value in acc_result.items():
         print(key)
         for i in value:
             print("   ", i);

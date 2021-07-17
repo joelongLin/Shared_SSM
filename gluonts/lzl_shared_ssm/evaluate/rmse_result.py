@@ -21,24 +21,29 @@ models = ['shared_ssm',
 #("UKX,VIX,SPX,SHSZ300,NKY" , train, 2606)
 past_length = 60
 pred_length = 3
+slice_type = 'overlap'
+
+# 根据要求修改数据集信息
+#length = 1172
 # length = 2606
 length = 503 
-slice_type = 'overlap'
+
+#target = 'PM25,PM10,NO2'
 # target = 'UKX,VIX,SPX,SHSZ300,NKY'
 target = "btc,eth"
 
 # Shared ssm 专属的超参
 dim_l = 4
-K = 3
+K = 2
 dim_u = 5
 bs = 32;
-lags = 3
+lags = 1
 
 check_noise = ""
 if(len(sys.argv) >= 2):
     check_noise = sys.argv[1]
 eval_result_root = 'evaluate/results{}/{}_length({})_slice({})_past({})_pred({})'.format(
-  "_" + check_noise, target.replace(',' , '_') , length , slice_type, past_length , pred_length
+  "" if check_noise=="" else "_" + check_noise, target.replace(',' , '_') , length , slice_type, past_length , pred_length
 )
 
 #! 在这里修改 RMSE 的函数
@@ -78,7 +83,7 @@ if __name__ == "__main__":
 
     # 对模型产生的数据进行读取
     shared_ssm_result = []
-    no_sample_acc_result = []
+    no_sample_rmse_result = []
     deep_state_result = []
     shared_ssm_without_env_result = []
     common_lstm_result = []
@@ -128,7 +133,7 @@ if __name__ == "__main__":
                     predict=single_result[:, :, -pred_length:]
                 )
                 acc = np.round(acc, 2)
-                no_sample_acc_result.append(acc)
+                no_sample_rmse_result.append(acc)
                 continue
 
 
@@ -259,31 +264,31 @@ if __name__ == "__main__":
 
 
 
-    acc_result = {}
+    rmse_result = {}
     # top_num = 12
     for model in models:
         if model == 'shared_ssm':
-            acc_result[model] = shared_ssm_result
+            rmse_result[model] = shared_ssm_result
         if model == 'shared_ssm_no_sample':
-            acc_result[model] = no_sample_acc_result
+            rmse_result[model] = no_sample_rmse_result
         if model == 'deep_state':
-            acc_result[model] =  deep_state_result
+            rmse_result[model] =  deep_state_result
         if model  == 'shared_ssm_without_env' :
-            acc_result[model] = shared_ssm_without_env_result
+            rmse_result[model] = shared_ssm_without_env_result
         if model == 'common_lstm':
-            acc_result[model] = common_lstm_result
+            rmse_result[model] = common_lstm_result
         if model == 'prophet':
-            acc_result[model] = prophet_result
+            rmse_result[model] = prophet_result
         if model == 'deepar':
-            acc_result[model] = deepar_result
+            rmse_result[model] = deepar_result
         if model == 'DEEPAR':
-            acc_result[model] = DEEPAR_result
+            rmse_result[model] = DEEPAR_result
         if model == 'DEEPSTATE':
-            acc_result[model] = DEEPSTATE_result
+            rmse_result[model] = DEEPSTATE_result
         if model == 'PROPHET':
-            acc_result[model] = PROPHET_result
+            rmse_result[model] = PROPHET_result
     print('---acc 指标结果 ---')
-    for key, value in acc_result.items():
+    for key, value in rmse_result.items():
         print(key)
         for i in value:
             print("   ", i);
