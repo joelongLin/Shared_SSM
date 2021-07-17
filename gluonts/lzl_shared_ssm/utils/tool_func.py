@@ -52,8 +52,8 @@ def time_format_from_frequency_str(freq_str: str) :
         offsets.Week: '%Y-%W',
         offsets.Day: '%Y-%m-%d',
         offsets.BusinessDay: '%Y-%m-%d',
-        offsets.Hour: '%Y-%m-%d %H',
-        offsets.Minute: '%Y-%m-%d %H:%M',
+        offsets.Hour: '%Y-%m-%d %H:%M:%S',
+        offsets.Minute: '%Y-%m-%d %H:%M:%S',
     }
 
     offset = to_offset(freq_str)
@@ -68,7 +68,7 @@ def create_dataset_if_not_exist(paths, start, past_length , pred_length , slice 
         path = paths[name]
         if not os.path.exists(path):
             logging.info('there is no dataset [%s] , creating...' % name)
-            os.system('python data_process/preprocessing.py -st={} -d={} -t={} -p={} -s={} -n={} -f={}'
+            os.system('python data_process/preprocessing.py -st="{}" -d="{}" -t="{}" -p="{}" -s="{}" -n="{}" -f="{}"'
                       .format( start
                               , name
                               , past_length
