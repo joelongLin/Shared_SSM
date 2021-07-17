@@ -22,7 +22,7 @@ past_length = 60
 pred_length = 3
 slice_type = 'overlap'
 
-#length = 1172
+#length = 1168
 #length = 2606
 length = 503
 #target = 'PM25,PM10,NO2'

@@ -11,7 +11,7 @@ air_lstm_logs_dir='logs/air_overlap(lstm)'
 # air quality
 AIR_target="PM25,PM10,NO2"
 AIR_start='2013-4-15_17:00:00'
-AIR_length='1172'
+AIR_length='1168'
 AIR_freq='1H'
 
 # economic indice

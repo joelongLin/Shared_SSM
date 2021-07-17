@@ -3,19 +3,19 @@
 # btc eth 
 #(90,5,13) (60,3,14) (30,1,15)
 # Scale of the GOLD are relatively small,so the noise should be 1 to 2.5
-logs_dir="logs/btc_eth(shared_ssm_202106)"
-reload_model=''
-reload_time=''
-target="btc,eth"
-environment='gold'
-use_env='True'
-start='2018-08-02'
-timestep='503'
-freq='1D'
-slice='overlap'
-past_length='60'
-prediction_length='1'
-batch_num='14'
+# logs_dir="logs/btc_eth(shared_ssm_202106)"
+# reload_model=''
+# reload_time=''
+# target="btc,eth"
+# environment='gold'
+# use_env='True'
+# start='2018-08-02'
+# timestep='503'
+# freq='1D'
+# slice='overlap'
+# past_length='60'
+# prediction_length='1'
+# batch_num='14'
 
 # economic indices
 #(30,1,81) (60,3,80) (90,5,79) ===> 2606
@@ -33,37 +33,21 @@ batch_num='14'
 # prediction_length='1'
 # batch_num='80'
 
-# air quality
-# (60, {1,3,5}, 35)
-# use_env='True'
-# logs_dir="logs/ETTH(shared_ssm_202107)"
-# reload_model=''
-# reload_time=''
-# target="HUFL,HULL,MUFL,MULL,LUFL,LULL"
-# environment='OT'
-# start='2016-07-02_00:00:00' # 日期这里面的空格换成下划线
-# timestep='2208'
-# freq='1H'
-# slice='overlap'
-# past_length='60'
-# prediction_length='3'
-# batch_num='68'
-
 # air quality 数据集
 # (60, {1,3,5}, 35)
-# use_env='True'
-# logs_dir="logs/air_quality(shared_ssm_202107)"
-# reload_model=''
-# reload_time=''
-# target="PM25,PM10,NO2"
-# environment='temperature,pressure,humidity,wind'
-# start='2013-4-15_17:00:00' # 日期这里面的空格换成下划线
-# timestep='1172'
-# freq='1H'
-# slice='overlap'
-# past_length='60'
-# prediction_length='1'
-# batch_num='35'
+use_env='True'
+logs_dir="logs/air_quality(shared_ssm_202107)"
+reload_model=''
+reload_time=''
+target="PM25,PM10,NO2"
+environment='temperature,pressure,humidity,wind'
+start='2013-4-15_21:00:00' # 日期这里面的空格换成下划线
+timestep='1168'
+freq='1H'
+slice='overlap'
+past_length='60'
+prediction_length='3'
+batch_num='35'
 
 batch_size='32'
 epochs='100'
@@ -78,7 +62,7 @@ lr='0.001'
 #USE FOR TRAINIG
 for K in 2 3 4 5
 do
-  for maxlags in 1 2 3 4 5
+  for maxlags in 3 4 5 6 7
   do
     for ((i=1;i<=6;i=i+1))#! repettion
     do

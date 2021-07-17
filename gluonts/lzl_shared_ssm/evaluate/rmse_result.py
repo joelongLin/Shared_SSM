@@ -20,17 +20,17 @@ models = ['shared_ssm',
 #("UKX,VIX,SPX,SHSZ300,NKY" ,2867)
 #("UKX,VIX,SPX,SHSZ300,NKY" , train, 2606)
 past_length = 60
-pred_length = 3
+pred_length = 1
 slice_type = 'overlap'
 
 # 根据要求修改数据集信息
-#length = 1172
+length = 1168
 # length = 2606
-length = 503 
+# length = 503 
 
-#target = 'PM25,PM10,NO2'
+target = 'PM25,PM10,NO2'
 # target = 'UKX,VIX,SPX,SHSZ300,NKY'
-target = "btc,eth"
+# target = "btc,eth"
 
 # Shared ssm 专属的超参
 dim_l = 4

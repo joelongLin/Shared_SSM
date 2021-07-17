@@ -22,7 +22,7 @@ E_env='SX5E,DXY'
 # air quality
 AIR_target='PM25,PM10,NO2'
 AIR_start='2013-4-15_17:00:00'
-AIR_length='1172'
+AIR_length='1168'
 AIR_freq='1H'
 AIR_env='temperature,pressure,humidity,wind'
 
