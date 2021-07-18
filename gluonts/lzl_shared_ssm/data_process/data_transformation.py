@@ -15,6 +15,7 @@ from gluonts.transform import (Chain,
 from gluonts.time_feature import time_features_from_frequency_str
 from gluonts.lzl_deepstate.model.issm import CompositeISSM
 
+# Create transformation for SSSM input
 def create_transformation(dataset_name : str):
     info = datasets_info[dataset_name]
     return Chain(
@@ -72,7 +73,7 @@ def create_transformation(dataset_name : str):
         ]
     )
 
-# 此函数将只用于调试
+# ONLY FOR TEST
 if __name__ == '__main__':
     # it_test_ds = iter(test_ds)
     #

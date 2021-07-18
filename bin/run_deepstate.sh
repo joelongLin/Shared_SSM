@@ -18,7 +18,7 @@ env='gold'
 batch_num='15'
 
 #economic indice
-# (30,1,81) (60,3,80) (90,5,79) batch_size = 32  --> 2606
+
 E_target="UKX,VIX,SPX,SHSZ300,NKY"
 E_start='2008-01-04'
 E_length='2606'

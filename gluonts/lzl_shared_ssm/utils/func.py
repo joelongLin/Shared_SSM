@@ -183,7 +183,7 @@ def erfinv(x: Tensor) -> Tensor:
 
     return tf.math.multiply(p, x)
 
-# 产生适用于 tensorflow 的shape list
+# Generate shape list suitable for tensorflow
 def mxnet_slice(tensor : Tensor, axis:int, begin:int, end:int):
     begin_list = [0]*len(tensor.shape) ; begin_list[axis] = begin
     end_list = [-1]*len(tensor.shape) ; end_list[axis] = end-begin
@@ -299,7 +299,7 @@ def jitter_cholesky(
             # gpu will not throw error but will store nans. If nan, L.sum() = nan and
             # L.nansum() computes the sum treating nans as zeros so the error tolerance can be large.
             # for axis = Null, nansum() and sum() will sum over all elements and return scalar array with shape (1,)
-            # TODO: 因为tensorflow无法eager到数据，所以assert 和 if 的判断都无用
+            # TODO: # Tensorflow can't eager data, so assert of if is useless
             # nan_to_zero_L = tf.where(tf.math.is_nan(L) , tf.zeros_like(L) , tf.ones_like(L))
             # assert tf.math.abs(tf.math.reduce_sum(nan_to_zero_L) - tf.math.reduce_sum(L)) <= 1e-1
             return L

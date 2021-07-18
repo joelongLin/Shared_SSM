@@ -2,13 +2,13 @@ from typing import List, NamedTuple, Optional , Union
 
 root='data_process/raw_data/'
 class DatasetInfo(NamedTuple):
-    name: str  # 该数据集的名称
-    url: Union[str, List[str]]  # 存放该数据集的路径
-    time_col: str  # 表明这些 url 里面对应的 表示时刻的名称 如: eth.csv 中的 beijing_time  或者 btc.csv 中的Date
-    dim: int  # 该数据集存在多少条序列
-    aim: List[str]  # 序列的目标特征，包含的数量特征应该与 url， time_col一致
-    index_col: Optional[int] = None  # 是否存在多余的一列 index
-    feat_dynamic_cat: Optional[str] = None  # 表明该序列类别的 (seq_length , category)
+    name: str  # dataset name
+    url: Union[str, List[str]]  # dataset path[s]
+    time_col: str  # datetime column
+    dim: int  # dim of dataset
+    aim: List[str]  # target column
+    index_col: Optional[int] = None  # column number of index
+    feat_dynamic_cat: Optional[str] = None  #  (seq_length , category)
 
 datasets_info = {
     "btc": DatasetInfo(
@@ -23,7 +23,7 @@ datasets_info = {
         url=root + 'eth.csv',
         time_col='beijing_time',
         dim=1,
-        aim=['close'],  # 这样子写只是为了测试预处理程序是否强大
+        aim=['close'],  
     ),
     "gold": DatasetInfo(
         name="gold",

@@ -30,10 +30,10 @@ if __name__ == '__main__':
 
     if slice == 'overlap':
         series = timestep - past - pred + 1
-        print('每个数据集的序列数量为 ,', series)
+        print('Series num in each dataset: ,', series)
     elif slice == 'nolap':
         series = timestep // (past + pred)
-        print('每个数据集的序列数量为 ,', series)
+        print('Series num in each dataset: ,', series)
     else:
         series = 1
 

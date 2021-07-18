@@ -49,20 +49,20 @@ result_params = '_'.join([
 if __name__ == '__main__': 
     if slice_style == 'overlap':
         series = timestep - past - pred + 1
-        print('每个数据集的序列数量为 ', series)
+        print('Series num in each dataset: ', series)
     elif slice_style == 'nolap':
         series = timestep // (past + pred)
-        print('每个数据集的序列数量为 ', series)
+        print('Series num in each dataset: ', series)
     else:
         series = 1
-        print('每个数据集的序列数量为 ', series ,'情景为长单序列')
+        print('Series num in each dataset: ', series ,', is single series')
     result_root_path  = 'evaluate/results/{}_length({})_slice({})_past({})_pred({})'.format(target.replace(',' ,'_'), timestep , slice_style ,past , pred)
     if not os.path.exists(result_root_path):
         os.makedirs(result_root_path)
     forecast_result_saved_path = os.path.join(result_root_path,'prophet_'  + result_params + '.pkl')
     forecast_result_saved_path = add_time_mark_to_file(forecast_result_saved_path)
 
-    # 目标序列的数据路径
+    # target series path
     target_path = {ds_name: ds_name_prefix.format(
         '%s_start(%s)_freq(%s)' % (ds_name, start,freq), '%s_DsSeries_%d' % (slice_style, series),
         'train_%d' % past, 'pred_%d' % pred
@@ -76,13 +76,13 @@ if __name__ == '__main__':
 
     if not os.path.exists(forecast_result_saved_path):
         sample_forecasts = []
-        # 由于 target 应该都是 dim = 1 只是确定有多少个 SSM 而已
+        # dimension of each target series should be 1, to check the num of ssm.
         for target_name in target_path:
             target = target_path[target_name]
-            print('导入数据 : {}'.format(target))
+            print('import data : {}'.format(target))
             with open(target, 'rb') as fp:
                 target_ds = pickle.load(fp)
-                assert target_ds.metadata['dim'] == 1, 'target 序列的维度都应该为1'
+                assert target_ds.metadata['dim'] == 1, 'dimension of target series should be 1'
                 
                 prophet_predictor = ProphetPredictor(freq=freq, prediction_length=pred)
                 generators = prophet_predictor.predict(target_ds.train)
@@ -92,6 +92,6 @@ if __name__ == '__main__':
                 sample_forecasts.append(sorted_samples)
 
         sample_forecasts = np.concatenate(sample_forecasts, axis=0)#(ssm_num , bs , num_samples, 1)
-        print('把预测结果保存在-->', forecast_result_saved_path)
+        print('Result of prediction are stored in-->', forecast_result_saved_path)
         with open(forecast_result_saved_path , 'wb') as fp:
             pickle.dump(sample_forecasts , fp)

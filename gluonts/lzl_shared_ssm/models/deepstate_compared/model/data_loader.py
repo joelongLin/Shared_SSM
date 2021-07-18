@@ -12,7 +12,7 @@ class GroundTruthLoader(object):
         try:
             self.ds = get_dataset(config.dataset, regenerate=False)
         except:
-            print('导入的 ground truth 来自于外部')
+            print('get ground truth from outside')
             with open('data/groundtruth_{}_{}_{}.pkl'.format(
             config.dataset, config.past_length, config.prediction_length,
             ), 'rb') as fp:
@@ -42,7 +42,7 @@ class GroundTruthLoader(object):
 
 class DataLoader(object):
 
-    # 输入一个 list[samples] ,其中每个 sample 都是一个list
+    
     def __init__(self,list_dataset,config):
         self.list_dataset = list_dataset
         self.batch_size = config.batch_size
@@ -59,7 +59,7 @@ class DataLoader(object):
         start = 0
         end = start + self.batch_size
         flag = end > start
-        while is_train or flag:  # 训练模式，无限循环提取数据
+        while is_train or flag:  
             start = start % (len(self.list_dataset))
             end = end % (len(self.list_dataset))
             flag = end > start
@@ -70,21 +70,20 @@ class DataLoader(object):
             batch_train = [self.list_dataset[idx] for idx in order[start:end]]\
                 if start < end else [self.list_dataset[idx] for idx in order[start:]+order[:end]]
 
-            # 获得不应该为输入网络的信息的初始位置
+            
             for end_input in range(len(batch_train[0])-1,0,-1):
                 if isinstance(batch_train[0][end_input] , np.ndarray):
-                    # print('当前第%d个input位，确实是网络所需要的数据' % end_input)
                     break
-                    # print('当前第%d个input位，不是网络所需要的数据' % end_input)
-            # 对数据进行重新改造，将每一个数据进行stack
-            for input_no in range(end_input+1): #你的遍历是要包括 endpoint的
+                    
+            
+            for input_no in range(end_input+1): 
                 input = [batch_train[sample_no][input_no]
                          for sample_no in range(len(batch_train))]
                 input = np.stack(input,axis=0)
                 net_input.append(input)
 
             if end_input != len(batch_train[0])-1:
-                for i in range(len(batch_train[0])-1,end_input,-1): #去除的其他信息不包括 endpoint
+                for i in range(len(batch_train[0])-1,end_input,-1): 
                     other_info = [batch_train[sample_no][i]
                          for sample_no in range(len(batch_train))]
                     net_input_other_info.append(other_info)

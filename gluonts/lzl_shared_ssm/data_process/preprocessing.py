@@ -48,15 +48,15 @@ def slice_df_overlap(
     dataframe ,window_size,past_size
 ):
     '''
-    :param dataframe:  给定需要滑动切片的总数据集
-    :param window_size:  窗口的大小
-    :param past_size:  训练的窗口大小
-    :return:  (2) 切片后的序列 (2)序列开始的时间 List[start_time] (3) 序列开始预测的时间
+    :param dataframe:  target dataframe
+    :param window_size:  windows size
+    :param past_size:  training length
+    :return:  (1) sliced series (2) start time (3) forecast start time
     '''
     data = dataframe.values
     timestamp = dataframe.index
     target_slice,target_start ,target_forecast_start = [], [] , []
-    # feat_static_cat 特征值，还是按照原序列进行标注
+    # feat_static_cat
     for i in range(window_size - 1, len(data)):
         sample = data[(i - window_size + 1):(i + 1)]
         target_slice.append(sample)
@@ -68,8 +68,8 @@ def slice_df_overlap(
     target_slice = np.array(target_slice)
     return target_slice, target_start,target_forecast_start
 
-# 此方法对序列的切割，完全不存在重叠
-# 缺点：如果窗口和长度不存在倍数关系，会使得数据集存在缺失
+
+
 def slice_df_nolap(
     dataframe,window_size,past_size
 ):
@@ -92,7 +92,7 @@ slice_func = {
     'overlap' : slice_df_overlap,
     'nolap' : slice_df_nolap
 }
-#这里特别容易出现问题
+
 def load_finance_from_csv(ds_info):
     '''
     ds_info : DatasetInfo type contain the basic information of raw dataset
@@ -101,20 +101,19 @@ def load_finance_from_csv(ds_info):
     path, time_str, aim = ds_info.url, ds_info.time_col, ds_info.aim
     series_start = pd.Timestamp(ts_input=args.start, freq=args.freq)
     series_end = series_start + (args.num_time_steps - 1) * series_start.freq
-    # 单文件数据集
+    # Single file
     if isinstance(path, str):
         url_series = pd.read_csv(path, sep=',', header=0, parse_dates=[time_str])
-    # 多文件数据集 ，进行 时间轴 上的拼接
+    # Multiple files, concat on time
     elif isinstance(path, List):
         url_series = pd.DataFrame();
         for file in path:
             file_series = pd.read_csv(file, sep=',', header=0, index_col=ds_info.index_col, parse_dates=[time_str])
             url_series = pd.concat([url_series, file_series], axis=0)
 
-    # TODO: 这里要注意不够 general 只在适合 freq='D' 或者 freq = 'B' 的情况
+    
     if 'D' in args.freq or 'B' in args.freq:
         url_series[time_str] = pd.to_datetime(url_series[time_str].dt.date)
-    # 对于小时来说需要额外处理
     else: 
         url_series[time_str] = pd.to_datetime(url_series[time_str])
 
@@ -125,7 +124,7 @@ def load_finance_from_csv(ds_info):
 
     # 填充额外的数据
     if url_series.shape[0] < args.num_time_steps:
-        # 添加缺失的时刻(比如周末数据缺失这样的)
+        # padding missing data
         index = pd.date_range(start=series_start, periods=args.num_time_steps, freq=series_start.freq)
         pd_empty = pd.DataFrame(index=index)
         url_series = pd_empty.merge(right=url_series, left_index=True, right_index=True, how='left')
@@ -133,10 +132,10 @@ def load_finance_from_csv(ds_info):
     elif url_series.shape[0] == args.num_time_steps:
         url_series.set_index(pd.date_range(series_start, series_end, freq=args.freq), inplace=True)
     else:
-        print('数据集有问题，请重新检查')
+        print('Invalid Dataset')
         exit()
-    # TODO: 这里因为当第二个 pd.Series要插入到 df 中出现错误时，切记要从初始数据集的脏数据出发
-    # 使用 url_series[col].index.duplicated()  或者  df.index.duplicated() 查看是否存在index重复的问题
+    
+    # Using `url_series[col].index.duplicated()` or `df.index.duplicated()` to check duplicate index problem
     for col in url_series.columns:
         df["{}_{}".format(ds_info.name, col)] = url_series[col]
     return df
@@ -149,7 +148,7 @@ def create_dataset(dataset_name):
                    'freq':args.freq,
     }
     func = slice_func.get(args.slice)
-    if func != None: #表示存在窗口切割函数
+    if func != None: #contain slice function
         window_size = args.pred_length + args.train_length
         target_slice , target_start ,target_forecast_start = func(df_aim, window_size,args.train_length)
         ds_metadata['sample_size'] = len(target_slice)
@@ -157,7 +156,7 @@ def create_dataset(dataset_name):
         ds_metadata['start'] = target_start
         ds_metadata['forecast_start'] = target_forecast_start
         return target_slice,ds_metadata
-    else: # 表示该数据集不进行切割
+    else: # no slice function
         # feat_static_cat = np.arange(ds_info.dim).astype(np.float32)
         ds_metadata['sample_size'] = 1
         ds_metadata['num_step'] = args.num_time_steps
@@ -173,7 +172,7 @@ def create_dataset(dataset_name):
 
 def createGluontsDataset(data_name):
     ds_info = datasets_info[data_name]
-    # 获取所有目标序列，元信息
+    # get metadata of target serires
     #(samples_size , seq_len , 1)
     target_slice, ds_metadata = create_dataset(data_name)
     # print('feat_static_cat : ' , feat_static_cat , '  type:' ,type(feat_static_cat))
@@ -204,8 +203,8 @@ def createGluontsDataset(data_name):
     ), 'wb') as fp:
         pickle.dump(dataset, fp)
 
-    print('当前数据集为: ', data_name , '训练长度为 %d , 预测长度为 %d '%(args.train_length , args.pred_length),
-          '(切片之后)每个数据集样本数目为：'  , dataset.metadata['sample_size'])
+    print('current dataset: ', data_name , 'training length %d ,prediction length %d '%(args.train_length , args.pred_length),
+          'sample number of dataset: ：'  , dataset.metadata['sample_size'])
 
 if __name__ == '__main__':
           
@@ -216,40 +215,3 @@ if __name__ == '__main__':
 
 
 
-
-# pandas 设置 date_range的API
-# time_index = pd.date_range(
-#     start=args.start,
-#     freq=args.freq,
-#     periods=args.num_time_steps,
-# )
-# df = df.set_index(time_index)
-
-
-# 当 series_url 是一个 List的情况下
-# def load_finance_from_csv(ds_info):
-#     df = pd.DataFrame()
-#     for url_no in range(len(ds_info.url)):
-#         path, time_str  = ds_info.url[url_no], ds_info.time_col[url_no]
-#         if isinstance(ds_info.aim[url_no] , list): #当前数据集 有多个目标序列，或 传入的值为 List
-#             aim = ds_info.aim[url_no]
-#         elif isinstance(ds_info.aim[url_no] , str): #当前数据集 只有一个目标序列，传入的值是str
-#             aim = [ds_info.aim[url_no]]
-#         series_start = pd.Timestamp(ts_input=args.start , freq=args.freq)
-#         series_end = series_start + (args.num_time_steps-1)*series_start.freq
-#         data_name = path.split('/')[-1].split('.')[0]
-#         url_series = pd.read_csv(path ,sep=',' ,header=0 , parse_dates=[time_str])
-#         if 'D' in args.freq:
-#             url_series[time_str] = pd.to_datetime(url_series[time_str].dt.date)
-#         url_series.set_index(time_str ,inplace=True)
-#         url_series = url_series.loc[series_start:series_end][aim]
-#         if url_series.shape[0] < args.num_time_steps:
-#             #添加缺失的时刻(比如周末数据确实这样的)
-#             index = pd.date_range(start=series_start, periods=args.num_time_steps, freq=series_start.freq)
-#             pd_empty = pd.DataFrame(index=index)
-#             url_series = pd_empty.merge(right=url_series,left_index=True , right_index=True, how='left')
-#
-#         # 使用 url_series[col].index.duplicated()  或者  df.index.duplicated() 查看是否存在index重复的问题
-#         for col in url_series.columns:
-#             df[f"{data_name}_{col}"] = url_series[col]
-#     return df

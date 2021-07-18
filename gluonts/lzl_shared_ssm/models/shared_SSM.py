@@ -117,7 +117,7 @@ class SharedSSM(object):
             target = target_path[target_name]
             with open(target, 'rb') as fp:
                 target_ds = pickle.load(fp)
-                assert target_ds.metadata['dim'] == 1 , 'target 序列的维度都应该为1'
+                assert target_ds.metadata['dim'] == 1 , 'dimension of target series should be 1'
                 self.target_data.append(target_ds)
 
         self.ssm_num = len(self.target_data)
@@ -131,7 +131,7 @@ class SharedSSM(object):
         print('Load Origin Data success~~~')
 
     def transform_data(self):
-        # 首先需要把 target
+        
         time_features = time_features_from_frequency_str(self.config.freq)
         self.time_dim = len(time_features)
         transformation = Chain([

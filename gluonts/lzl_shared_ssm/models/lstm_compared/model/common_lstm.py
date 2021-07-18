@@ -31,21 +31,21 @@ INIT_TIME = 'init_time'
 class Common_LSTM(object):
     def load_original_data(self):
         name_prefix = 'data_process/processed_data/{}_{}_{}_{}.pkl'
-        # 导入 target 以及 environment 的数据
+        # load target and environment data
         if self.config.slice == 'overlap':
             series = self.config.timestep - self.config.past_length - self.config.pred_length + 1
-            print('每个数据集的序列数量为 ,', series)
+            print('Series num in each dataset: ,', series)
         elif self.config.slice == 'nolap':
             series = self.config.timestep // (self.config.past_length + self.config.pred_length)
-            print('每个数据集的序列数量为 ,', series)
+            print('Series num in each dataset: ,', series)
         else:
             series = 1
-            print('当前序列数量为',series ,',是单长序列的情形')
+            print('sample of current dataset: ',series ,', a long single seires')
         
         # change "_" in self.config.start
         self.config.start = self.config.start.replace("_", " ")
 
-        # 目标序列的数据路径
+        # target series path
         target_path = {name:name_prefix.format(
             '%s_start(%s)_freq(%s)'%(name, self.config.start ,self.config.freq), '%s_DsSeries_%d' % (self.config.slice, series),
             'train_%d' % self.config.past_length, 'pred_%d' % self.config.pred_length,
@@ -59,19 +59,19 @@ class Common_LSTM(object):
 
 
         self.target_data = []
-        # 由于 target 应该都是 dim = 1 只是确定有多少个 SSM 而已
+        # dimension of each target series should be 1, to check the num of ssm.
         for target_name in target_path:
             target = target_path[target_name]
             with open(target, 'rb') as fp:
                 target_ds = pickle.load(fp)
-                assert target_ds.metadata['dim'] == 1 , 'target 序列的维度都应该为1'
+                assert target_ds.metadata['dim'] == 1 , 'dimension of target series should be 1'
                 self.target_data.append(target_ds)
 
         self.ssm_num = len(self.target_data)
-        print('导入原始数据成功~~~')
+        print('load origin data success~~~')
 
     def transform_data(self):
-        # 首先需要把 target
+        
         time_features = time_features_from_frequency_str(self.config.freq)
         self.time_dim = len(time_features)
         transformation = Chain([
@@ -88,7 +88,7 @@ class Common_LSTM(object):
                 target_field = FieldName.TARGET,
                 output_field = FieldName.OBSERVED_VALUES,
             ),
-            # 这里的 AddTimeFeatures，面对的ts, 维度应该为(features,T)
+            
             AddTimeFeatures(
                 start_field=FieldName.START,
                 target_field=FieldName.TARGET,
@@ -113,8 +113,8 @@ class Common_LSTM(object):
             )
 
         ])
-        print('已设置时间特征~~')
-        # 设置环境变量的 dataloader
+        print('temporal feature is set~~')
+        
         target_train_iters = [iter(TrainDataLoader_OnlyPast(
             dataset=self.target_data[i].train,
             transform=transformation,
@@ -147,7 +147,7 @@ class Common_LSTM(object):
         self.pred_length = config.pred_length
 
 
-        # 放入数据集
+        # put dataset
         self.load_original_data()
         self.transform_data()
 
@@ -162,7 +162,7 @@ class Common_LSTM(object):
         self.scaling = config.scaling
 
 
-        # 开始搭建有可能Input 对应的 placeholder
+        # placeholders
         self.train_init_time = tf.placeholder(dtype=tf.float32 ,shape=[self.batch_size , self.time_dim])
         self.past_observed_values = tf.placeholder(dtype=tf.float32 , shape=[self.batch_size ,self.past_length, 1])
         self.past_time_feat = tf.placeholder(dtype=tf.float32 , shape =[self.batch_size ,self.past_length, self.time_dim])
@@ -198,7 +198,7 @@ class Common_LSTM(object):
     def build_train_forward(self):
         self.target_norm, self.target_scale = self.scaler.build_forward(data=self.past_target
                                , observed_indicator=self.past_observed_values) #(bs,seq, 1) #(bs,1)  dim_z == 1
-        #将在lstm的第一个时间步添加 0
+        
         target_input = tf.concat(
             [tf.zeros(shape=(self.target_norm.shape[0] , 1 ,self.target_norm.shape[-1]))
             ,self.target_norm[:,:-1]]
@@ -210,7 +210,7 @@ class Common_LSTM(object):
         else:
             features = target_input
 
-        # output 相当于使用 lstm 产生 SSM 的参数, 且只是一部分的参数
+        
         self.lstm_train_output, self.lstm_final_state = tf.nn.dynamic_rnn(
             cell=self.lstm,
             inputs=features,
@@ -218,7 +218,7 @@ class Common_LSTM(object):
             dtype=tf.float32
         )  # ( bs,seq_length ,hidden_dim)
 
-        # 去掉最后一个时间步，这与 Shared_SSM中使用 p(l_t | l_(t-1))进行预测，实验设置上来说是一样的
+        
         lstm_pred_norm = self.lstm_dense(self.lstm_train_output) #( bs ,seq, dim_z )
         lstm_pred_norm = tf.math.multiply(lstm_pred_norm , self.past_observed_values) #(bs, seq , dim_z)
         self.lstm_pred = tf.math.multiply(lstm_pred_norm , tf.expand_dims(self.target_scale , 1)) #( bs, seq, dim_z)
@@ -250,7 +250,7 @@ class Common_LSTM(object):
         else:
             input_0 = self.target_norm[:,-1]
 
-        # 第一个时间步的训练
+        
         pred_result = tf.TensorArray(size=self.config.pred_length,dtype=tf.float32)
         i = 0;
 
@@ -303,7 +303,7 @@ class Common_LSTM(object):
         return self
 
     def train(self):
-        #如果导入已经有的信息,不进行训练
+        
         if self.config.reload_model != '':
             return
         sess = self.sess
@@ -325,7 +325,7 @@ class Common_LSTM(object):
                                            )
         params_path = os.path.join(self.train_log_path, 'model_params')
         params_path = add_time_mark_to_dir(params_path)
-        print('训练参数保存在 --->', params_path)
+        print('training model stores in --->', params_path)
 
         if not os.path.isdir(self.train_log_path):
             os.makedirs(self.train_log_path)
@@ -337,8 +337,8 @@ class Common_LSTM(object):
         }
         train_plot_points = {}
         for epoch_no in range(self.config.epochs):
-            #执行一系列操作
-            #产生新的数据集
+            
+            
             tic = time.time()
             epoch_loss = 0.0
 
@@ -354,13 +354,8 @@ class Common_LSTM(object):
 
                         batch_output , _   = sess.run([self.batch_loss , self.train_op]
                                                 , feed_dict=feed_dict)
-                        # TRAIN 画图
                         batch_pred = sess.run(self.lstm_pred , feed_dict=feed_dict)
-                        # plot_train_pred_NoSSMnum(path=self.train_log_path,targets_name=self.config.target
-                        #                          , data=target_batch_input['past_target'][i], pred=batch_pred,
-                        #                         batch=batch_no, epoch=epoch_no, ssm_no=i,plot_num=1
-                        #                          , plot_length=self.config.past_length, time_start=target_batch_input['start'],
-                        #                          freq=self.config.freq)
+                        
 
                         epoch_loss += np.sum(batch_output)
                         avg_epoch_loss = epoch_loss/((batch_no+1)*self.config.batch_size*(i+1))
@@ -404,7 +399,7 @@ class Common_LSTM(object):
                                                          best_epoch_info['MSE'])
                                                     )
                 self.saver.save(sess, self.train_save_path)
-                #'/{}_{}_best.ckpt'.format(self.dataset,epoch_no)
+                
         plot_train_epoch_loss(train_plot_points, self.train_log_path ,params_path.split('_')[-1])
         logging.info(
             f"Loading parameters from best epoch "
@@ -422,7 +417,7 @@ class Common_LSTM(object):
     def predict(self):
         sess = self.sess
         self.all_forecast_result = []
-        # 如果是 训练之后接着的 predict 直接采用之前 train 产生的save_path
+        
         if hasattr(self ,'train_save_path'):
             path = self.train_save_path
             try:
@@ -445,13 +440,13 @@ class Common_LSTM(object):
         ))
         model_result_path = add_time_mark_to_file(model_result_path)
 
-        # 不沉迷画图，把预测结果保存到pickle对象里面
+        
         for batch_no , target_batch in enumerate(self.target_test_loader):
             print('当前做Inference的第{}个batch的内容'.format(batch_no))
             if target_batch != None :
                 batch_concat = []
                 for i in range(self.ssm_num):
-                    # TODO:这里要注意，因为我的batch_size被固定了，所以，这里要添加一个对数量的补全
+                    
                     target_batch_complete, bs = complete_batch(batch=target_batch, batch_size=self.config.batch_size)
                     feed_dict = {
                         self.train_init_time: target_batch_complete[INIT_TIME],
@@ -461,7 +456,7 @@ class Common_LSTM(object):
                         self.future_time_feat : target_batch_complete['future_time_feat']
                     }
 
-                    # 这个部分只是为了方便画图，所以才把训练时候的结果也运行出来
+                    
                     batch_pred = sess.run(
                         self.pred_result, feed_dict=feed_dict
                     )[:bs]

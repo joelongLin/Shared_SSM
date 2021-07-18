@@ -79,7 +79,7 @@ class MeanScaler(Scaler):
             shape (N, C), computed according to the
             average absolute value over time of the observed values.
         """
-        # these will have shape (...,N, C) 注意：这里的sample
+        # these will have shape (...,N, C) 
         num_observed = tf.math.reduce_sum(observed_indicator, axis=seq_axis) 
         sum_observed = tf.math.reduce_sum((tf.math.abs(data) * observed_indicator),axis=seq_axis) 
 

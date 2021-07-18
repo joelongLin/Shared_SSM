@@ -96,17 +96,17 @@ class FeatureEmbedder(object):
 class DeepStateNetworkEnv(object):
     def load_original_data(self):
         name_prefix = 'data_process/processed_data/{}_{}_{}_{}.pkl'
-        # 导入 target 以及 environment 的数据
+        # load target and environment data
         
         if self.config.slice == 'overlap':
             series = self.config.timestep - self.config.past_length - self.config.pred_length + 1
-            print('每个数据集的序列数量为 ,', series)
+            print('Series num in each dataset: ,', series)
         elif self.config.slice == 'nolap':
             series = self.config.timestep // (self.config.past_length + self.config.pred_length)
-            print('每个数据集的序列数量为 ,', series)
+            print('Series num in each dataset: ,', series)
         else:
             series = 1
-            print('当前序列数量为', series, ',是单长序列的情形')
+            print('sample of current dataset: ', series, ', a long single seires')
         target_path = {name: name_prefix.format(
             '%s_start(%s)_freq(%s)' % (name, self.config.start, self.config.freq),
             '%s_DsSeries_%d' % (self.config.slice, series),
@@ -136,12 +136,12 @@ class DeepStateNetworkEnv(object):
         )
 
         self.target_data = []
-        # 由于 target 应该都是 dim = 1 只是确定有多少个 SSM 而已
+        # dimension of each target series should be 1, to check the num of ssm.
         for target_name in target_path:
             target = target_path[target_name]
             with open(target, 'rb') as fp:
                 target_ds = pickle.load(fp)
-                assert target_ds.metadata['dim'] == 1, 'target 序列的维度都应该为1'
+                assert target_ds.metadata['dim'] == 1, 'dimension of target series should be 1'
                 self.target_data.append(target_ds)
         
         self.env_data = [];
@@ -156,7 +156,7 @@ class DeepStateNetworkEnv(object):
         self.ssm_num = len(self.target_data)
 
     def transform_data(self):
-        # 首先需要把 target
+        
         time_features = time_features_from_frequency_str(self.config.freq)
         self.time_dim = len(time_features) + 1 # 考虑多加了一个 age_features
         seasonal = CompositeISSM.seasonal_features(self.freq)
@@ -218,7 +218,7 @@ class DeepStateNetworkEnv(object):
             )
 
         ])
-        # 设置环境变量的 dataloader
+        
         env_train_iters = [iter(TrainDataLoader_OnlyPast(
             dataset = self.env_data[i].train,
             transform = transformation,
@@ -289,12 +289,12 @@ class DeepStateNetworkEnv(object):
 
         self.univariate = self.issm.output_dim() == 1
 
-        # 放入数据集
+        # put dataset
         self.load_original_data()
         self.transform_data()
 
 
-        # 开始搭建有可能Input 对应的 placeholder
+        # placeholders
         self.feat_static_cat = tf.placeholder(dtype=tf.float32,shape=[self.batch_size , 1])
         self.past_observed_values = tf.placeholder(dtype=tf.float32 , shape=[self.batch_size ,self.past_length, 1])
         self.past_seasonal_indicators = tf.placeholder(dtype=tf.float32 , shape = [self.batch_size,self.past_length , self.seasonal_dim])
@@ -373,7 +373,7 @@ class DeepStateNetworkEnv(object):
         # construct big features tensor (context)
         features = tf.concat([time_feat, repeated_static_features], axis=2)#(bs,seq_length , time_feat + embedding)
 
-        # output 相当于使用 lstm 产生 SSM 的参数, 且只是一部分的参数
+        
         output , lstm_final_state = tf.nn.dynamic_rnn(
             cell = self.lstm,
             inputs = features,
@@ -576,7 +576,7 @@ class DeepStateNetworkEnv(object):
         return self
 
     def train(self):
-        #如果导入已经有的信息,不进行训练
+        
         if self.config.reload_model != '':
             return
         sess = self.sess
@@ -597,7 +597,7 @@ class DeepStateNetworkEnv(object):
                                            )
         params_path = os.path.join(self.train_log_path, 'model_params')
         params_path = add_time_mark_to_dir(params_path)
-        print('训练参数保存在 --->', params_path)
+        print('training model stores in --->', params_path)
         if not os.path.isdir(self.train_log_path):
             os.makedirs(self.train_log_path)
 
@@ -608,8 +608,8 @@ class DeepStateNetworkEnv(object):
         }
         train_plot_points = {}
         for epoch_no in range(self.config.epochs):
-            #执行一系列操作
-            #产生新的数据集
+            
+            
             tic = time.time()
             epoch_loss = 0.0
 
@@ -675,7 +675,7 @@ class DeepStateNetworkEnv(object):
                                                          best_epoch_info['metric_value'])
                                                     )
                 self.saver.save(sess, self.train_save_path)
-                #'/{}_{}_best.ckpt'.format(self.dataset,epoch_no)
+                
         plot_train_epoch_loss(train_plot_points, self.train_log_path ,params_path.split('_')[-1])
         logging.info(
             f"Loading parameters from best epoch "
@@ -693,7 +693,7 @@ class DeepStateNetworkEnv(object):
     def predict(self):
         sess = self.sess
         self.all_forecast_result = []
-        # 如果是 训练之后接着的 predict 直接采用之前 train 产生的save_path
+        
         if hasattr(self ,'train_save_path'):
             path = self.train_save_path
             try:

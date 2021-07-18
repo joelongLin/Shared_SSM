@@ -221,7 +221,7 @@ class TrainDataLoader_OnlyPast(DataLoader_NoMX):
            # iterate forever over the collection, the collection must be non empty
            while True:
                try:
-                   # 这个 first 就是先经过 ProcessDataEntry 之后的数据集
+                   
                    first = next(iter(collection))
                except StopIteration:
                    raise Exception("empty dataset")
@@ -279,7 +279,6 @@ class InferenceDataLoader_WithFuture(DataLoader_NoMX):
 
     def __iter__(self) -> Iterator[DataBatch]:
         buffer = BatchBuffer_NoMX(self.batch_size, self.dtype)
-        # 这里面修改源码，只是想让loader只出一遍数据集，但是传入的数据集，其序列长度被固定为 past + pred
         for data_entry in self.transform(iter(self.dataset), is_train=True):
             buffer.add(data_entry)
             if len(buffer) >= self.batch_size:

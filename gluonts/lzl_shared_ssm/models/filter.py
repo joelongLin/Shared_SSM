@@ -160,7 +160,7 @@ class MultiKalmanFilter(object):
 
     def compute_backwards(self, forward_states):
         '''
-        INPUT: 初始状态 p(l_T | z_(1:T), u_(1:T))
+        INPUT:  p(l_T | z_(1:T), u_(1:T))
               p(l_t | l_(t-1) , u_t) , t= 2,...,T
               p(l_t | z_(1:t) , u_(1:t)) , t= 1,....,T
         OUTPUT： p(l_t | z_(1:T) , u_(1:T)) , t= 2,...,T
@@ -301,11 +301,11 @@ class MultiKalmanFilter(object):
         alpha(t | z_(1:t))
         alpha_lstm_last_state 
         '''
-        #  暂时把compute forward 函数里面的reuse 给去除
+        
         mu_pred, Sigma_pred, mu_filt, Sigma_filt, alpha, state,  A, B, C  = forward_states = \
             self.compute_forwards()
         log_p_seq , z_pred_mean = self.get_filter_log_p_seq(mu_pred[:-1], Sigma_pred[:-1], C) #(ssm_num ,bs, seq)
-        # TODO: 这里先把 filter 计算的结果赋给 MultiKalmanFilter 的一个属性
+        
         self.log_likelihood =  log_p_seq
         forward_states = [mu_pred, Sigma_pred] #(seq , ssm_num ,bs , dim_l)  (seq , ssm_num , bs , dim_l , dim_l)
         # Swap batch dimension and time dimension
@@ -332,7 +332,7 @@ class MultiKalmanFilter(object):
 
 
 
-    #以下代码适用于 prediction 的情境下使用
+    
     def forward_step_fn_pred_mode(self, params, inputs):
         mu_pred, Sigma_pred,_,_,  alpha, state, _, _, C = params
         u, Q, R = inputs #(ssm,bs,dim_u) (bs, dim_l, dim_l)
@@ -346,7 +346,7 @@ class MultiKalmanFilter(object):
         )+R
 
 
-        #TODO: 预测的时候，由于没有 ground Truth 所以暂时把模型生成的期望作为预测值放入 alpha网络中
+        
         alpha,state=self.alpha_fn(inputs = z_pred_mean, state=state)
         A = tf.matmul(alpha, tf.reshape(self.A, [-1, alpha.shape[-1],
                                                  self.dim_l * self.dim_l]))  # (ssm_num ,bs, k) x (ssm_num ,k, dim_l*dim_l)
@@ -372,18 +372,12 @@ class MultiKalmanFilter(object):
         return mu_pred, Sigma_pred,z_pred_mean,z_pred_cov,  alpha, state, A, B, C
 
     def compute_forwards_pred_mode(self, reuse=None):
-        '''
-        上面的 compute_forwards我觉得是用offline的方式取写online的算法
-        即：假设所有的 z 都给定了，然后你进行计算
-        而这里的方法，则是一开始不存在z ，所有的一切filter都使用预测之后的结果进行填充
 
-        :return:
-        '''
         inputs = [tf.transpose(self.u, [2, 0, 1, 3]), #(pred ,ssm_num, bs, dim_u)
                   tf.transpose(self.Q, [1, 0, 2, 3]), #(pred ,bs , dim_l ,dim_l)
                   tf.transpose(self.R, [1, 0, 2, 3]) #(pred ,bs, dim_z , dim_z)
                   ]
-        # 用于占位的矩阵 A B C
+       
         dummy_init_z_pred = tf.zeros([self.ssm_num,self.mu.shape[1],self.dim_z])
         dummy_init_z_cov = tf.zeros([self.ssm_num,self.mu.shape[1],self.dim_z, self.dim_z])
         dummy_init_A = tf.ones([self.ssm_num, self.Sigma.get_shape()[1], self.dim_l, self.dim_l])

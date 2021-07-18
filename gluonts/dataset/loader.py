@@ -171,7 +171,7 @@ class TrainDataLoader(DataLoader):
         # iterate forever over the collection, the collection must be non empty
         while True:
             try:
-                # 这个 first 就是先经过 ProcessDataEntry 之后的数据集
+                
                 first = next(iter(collection))
             except StopIteration:
                 raise Exception("empty dataset")
