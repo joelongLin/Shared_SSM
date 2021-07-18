@@ -3,7 +3,7 @@
 # btc eth 
 #(90,5,13) (60,3,14) (30,1,15)
 # Scale of the GOLD are relatively small,so the noise should be 1 to 2.5
-logs_dir="logs/btc_eth(shared_ssm_202106)"
+logs_dir="logs/btc_eth(shared_ssm)"
 reload_model=''
 reload_time=''
 target="btc,eth"
@@ -20,7 +20,7 @@ batch_num='14'
 # economic indices
 #(30,1,81) (60,3,80) (90,5,79) ===> 2606
 # use_env='True'
-# logs_dir="logs/ukx_vix_spx_shsz_nky_train_overlap(shared_ssm_202106)"
+# logs_dir="logs/ukx_vix_spx_shsz_nky_train_overlap(shared_ssm)"
 # reload_model=''
 # reload_time=''
 # target="UKX,VIX,SPX,SHSZ300,NKY"
@@ -36,7 +36,7 @@ batch_num='14'
 # air quality 数据集
 # (60, {1,3,5}, 35)
 # use_env='True'
-# logs_dir="logs/air_quality(shared_ssm_202107)"
+# logs_dir="logs/air_quality(shared_ssm)"
 # reload_model=''
 # reload_time=''
 # target="PM25,PM10,NO2"

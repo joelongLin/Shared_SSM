@@ -3,8 +3,8 @@ source activate gluonts
 past='60'
 pred='1'
 
-# 选择不同数据集对应的log
-indice_lstm_logs_dir='logs/ukx_vix_spx_shsz_nky_train_overlap(lstm_202107)'
+# set log
+indice_lstm_logs_dir='logs/ukx_vix_spx_shsz_nky_train_overlap(lstm)'
 crypto_lstm_logs_dir='logs/btc_eth_overlap(lstm)'
 air_lstm_logs_dir='logs/air_overlap(lstm)'
 
