@@ -1,4 +1,7 @@
 # README
+This is source code of "Shared State Space Model for Background Information Extraction and Time Series Prediction"
+Author: Ruichu Cai, Zhaolong Lin, Wei Chen, Zhifeng Hao
+
 ## Data Preparing
 * Download [gold](https://finance.yahoo.com/quote/GOLD/history?p=GOLD) and rename it as `GOLD.csv` ,then put it under `gluonts/lzl_shared_ssm/data_process/raw_data` or Use the dataset in the `/attachment`
 * I put the cryptocurrency dataset and air quality dataset(which are clean) under `/attachment`, move them to the `gluonts/lzl_shared_ssm/data_process/raw_data`.
