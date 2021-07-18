@@ -1,5 +1,4 @@
 #!/bin/bash
-source activate gluonts
 past='60'
 pred='1'
 

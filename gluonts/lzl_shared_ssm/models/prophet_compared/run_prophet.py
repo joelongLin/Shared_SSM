@@ -1,7 +1,7 @@
 import pandas as pd
 import os
 import sys
-# 使用bash运行，目录再 pycharm/gluon
+
 if '/lzl_shared_ssm' not in os.getcwd():
     os.chdir('gluonts/lzl_shared_ssm')
     sys.path.insert(0, '../..')
@@ -46,8 +46,7 @@ result_params = '_'.join([
                         )
 
 
-if __name__ == '__main__':
-    # 导入 target 
+if __name__ == '__main__': 
     if slice_style == 'overlap':
         series = timestep - past - pred + 1
         print('每个数据集的序列数量为 ', series)

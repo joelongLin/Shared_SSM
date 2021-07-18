@@ -13,7 +13,7 @@ import matplotlib
 
 from ..utils import get_model_params_name
 
-matplotlib.use('Agg') # 用这句话避免 xshell 调参时，出现X11转发
+matplotlib.use('Agg') 
 from gluonts.time_feature import time_features_from_frequency_str
 
 from gluonts.model.forecast import SampleForecast
@@ -37,7 +37,6 @@ from ..utils import (del_previous_model_params
                     , add_time_mark_to_file
                     , add_time_mark_to_dir)
 
-#一些公用字符串
 INIT_TIME = 'init_time'
 
 
@@ -47,11 +46,11 @@ class SharedSSM(object):
         self.sess = sess
 
 
-        #导入原始的数据 , 确定了 SSM 的数量 ， env_dim 的维度，将ListData对象存放在list中
+        # Load Origin Data 
         self.load_original_data()
-        #将导入的原始数据放入dataloader中, 使其能产生placeholders需要的内容
+        # put data into transformer and loader
         self.transform_data()
-        # 开始搭建有可能Input 对应的 placeholder
+        # placeholder
         self.placeholders = {
             "past_environment": tf.placeholder(dtype=tf.float32,shape=[config.batch_size, config.past_length, self.env_dim],name="past_environment"),
             "past_env_observed": tf.placeholder(dtype=tf.float32,shape=[config.batch_size, config.past_length, self.env_dim],name="past_env_observed"),
@@ -72,21 +71,21 @@ class SharedSSM(object):
 
     def load_original_data(self):
         name_prefix = 'data_process/processed_data/{}_{}_{}_{}.pkl'
-        # 导入 target 以及 environment 的数据
+        
         if self.config.slice == 'overlap':
             series = self.config.timestep - self.config.past_length - self.config.pred_length + 1
-            print('每个数据集的序列数量为 ,', series)
+            print('Dataset series num ,', series)
         elif self.config.slice == 'nolap':
             series = self.config.timestep // (self.config.past_length + self.config.pred_length)
-            print('每个数据集的序列数量为 ,', series)
+            print('Dataset series num ,', series)
         else:
             series = 1
-            print('当前序列数量为',series ,',是单长序列的情形')
+            print('SINGLE SERIE')
         
         # change "_" in self.config.start
         self.config.start = self.config.start.replace("_", " ")
         
-        # 目标序列的数据路径
+        # target series
         target_path = {name:name_prefix.format(
             '%s_start(%s)_freq(%s)'%(name, self.config.start ,self.config.freq), '%s_DsSeries_%d' % (self.config.slice, series),
             'train_%d' % self.config.past_length, 'pred_%d' % self.config.pred_length,
@@ -94,7 +93,7 @@ class SharedSSM(object):
         target_start = pd.Timestamp(self.config.start,freq=self.config.freq)
         env_start = target_start - self.config.maxlags * target_start.freq
         env_start = env_start.strftime(time_format_from_frequency_str(self.config.freq))
-        print('environment 开始的时间：', env_start)
+        print('environment start time：', env_start)
         env_path = {name : name_prefix.format(
             '%s_start(%s)_freq(%s)'%(name, env_start , self.config.freq), '%s_DsSeries_%d' % (self.config.slice, series),
             'train_%d' % self.config.past_length, 'pred_%d' % self.config.pred_length,
@@ -113,7 +112,7 @@ class SharedSSM(object):
         )
 
         self.target_data , self.env_data = [] , []
-        # 由于 target 应该都是 dim = 1 只是确定有多少个 SSM 而已
+        # Know number of SSM
         for target_name in target_path:
             target = target_path[target_name]
             with open(target, 'rb') as fp:
@@ -129,7 +128,7 @@ class SharedSSM(object):
                 env_ds = pickle.load(fp)
                 self.env_dim += env_ds.metadata['dim']
                 self.env_data.append(env_ds)
-        print('导入原始数据成功~~~')
+        print('Load Origin Data success~~~')
 
     def transform_data(self):
         # 首先需要把 target
@@ -149,7 +148,7 @@ class SharedSSM(object):
                 target_field = FieldName.TARGET,
                 output_field = FieldName.OBSERVED_VALUES,
             ),
-            # 这里的 AddTimeFeatures，面对的ts, 维度应该为(features,T)
+            # Dimension should be (features,T)
             AddTimeFeatures(
                 start_field=FieldName.START,
                 target_field=FieldName.TARGET,
@@ -174,9 +173,8 @@ class SharedSSM(object):
             )
 
         ])
-        print('已设置时间特征~~')
-        # 设置环境变量的 dataloader
-        #self.config.batch_size
+        print('temporal feature is set~~')
+        
         env_train_iters = [iter(TrainDataLoader_OnlyPast(
             dataset = self.env_data[i].train,
             transform = transformation,
@@ -217,7 +215,7 @@ class SharedSSM(object):
 
     def build_module(self):
         with  tf.variable_scope('global_variable', reuse=tf.AUTO_REUSE):
-            #  A(transition)是对角矩阵表示在转移的时候尽可能保持不变, B(control) 和 C(emission) 从高斯分布中随机进行采样
+            # initial of matrix A B C
             init = np.array([np.eye(self.config.dim_l).astype(np.float32) for _ in range(self.config.K)])  # (K, dim_z , dim_z)
             init = np.tile(init, reps=(self.ssm_num, 1, 1, 1))
             A = tf.get_variable('A', initializer=init)
@@ -259,7 +257,7 @@ class SharedSSM(object):
                 name='prior_cov'
             )
 
-        # TODO: time_feature 是否要用两个不同的lstm ？
+        
         with tf.variable_scope('time_feature_exactor', initializer=tf.contrib.layers.xavier_initializer() ) :
             self.time_feature_lstm = []
             for k in range(self.config.time_exact_layers):
@@ -275,7 +273,6 @@ class SharedSSM(object):
             self.time_feature_lstm = tf.nn.rnn_cell.MultiRNNCell(self.time_feature_lstm)
             # self.time_feature_lstm = tf.nn.rnn_cell.BasicLSTMCell(self.time_feature_lstm)
 
-            # 关于 noise 的大小是否要 限B定在 0 和 1 之间，也值得讨论
             self.noise_emission_model = tf.layers.Dense(units=1, dtype=tf.float32, name='noise_emission' , activation=tf.nn.softmax)
             self.noise_transition_model = tf.layers.Dense(units=1 , dtype=tf.float32 , name='noise_transition' , activation=tf.nn.softmax)
 
@@ -292,7 +289,7 @@ class SharedSSM(object):
                 self.env_lstm.append(cell)
 
             self.env_lstm = tf.nn.rnn_cell.MultiRNNCell(self.env_lstm)
-            # 需要根据ssm的数量决定 dense
+            # SSM number decide the layer of dense
             self.u_model = [
                 tf.layers.Dense(units=self.config.dim_u , dtype=tf.float32 , name='u_{}_model'.format(i))
                 for i in range(self.ssm_num)
@@ -311,7 +308,6 @@ class SharedSSM(object):
 
     def alpha(self, inputs, state=None, reuse=None, name='alpha'):
         """
-        是为了给SSM产生转移矩阵的混合系数
         Args:
             inputs: tensor to condition mixing vector on (ssm_num , bs , 1)
             state: previous state of RNN network
@@ -331,8 +327,6 @@ class SharedSSM(object):
 
         # Initial state for the alpha RNN
         with tf.variable_scope(name, reuse=reuse):
-            # 只执行一步
-            # reshape 之后确实可以恢复回来
             inputs = tf.reshape(inputs , (-1,1) ) #(bs*ssm_num ,1)
             output, state = self.alpha_model(inputs, state) #(bs*ssm_num , cell_units) ,(h,c)
             # Get Alpha as the first part of the output
@@ -353,8 +347,7 @@ class SharedSSM(object):
             seq_axis=2
         )#(ssm_num , bs , seq , 1) , (ssm_num ,bs , 1)
 
-        # 一定要注意 Tensor 和 Variable 千万不能随意当成相同的东西
-        # 对 time_feature 进行处理
+        # NOTE:  Tensor and Variable are different things
         target_time_rnn_out, self.target_time_train_last_state = tf.nn.dynamic_rnn(
             cell=self.time_feature_lstm,
             inputs=self.placeholders['target_past_time_feature'],
@@ -371,8 +364,8 @@ class SharedSSM(object):
         train_R = self.noise_emission_model(target_time_rnn_out) #(bs, seq , 1)
         train_R = tf.expand_dims(train_R , axis=-1)
 
-        print('train network---生成噪声 Q shape : {} , R shape : {}'.format(train_Q.shape , train_R.shape))
-        # 对 environment 进行处理
+        print('train network--- Q shape : {} , R shape : {}'.format(train_Q.shape , train_R.shape))
+        # environment 
         env_rnn_out, self.env_train_last_state = tf.nn.dynamic_rnn(
             cell=self.env_lstm,
             inputs=train_env_norm,
@@ -386,14 +379,13 @@ class SharedSSM(object):
                 axis = 0
             ) #(ssm_num , bs ,seq , dim_u)
         else:
-            #重定向 放入KF的 global_B
+            # without env
             self.init_vars['B'] = tf.get_variable('B' , trainable=False , initializer=self.init_vars['B'])
             train_u = tf.constant(
                 np.zeros(shape=(self.ssm_num , self.config.batch_size , self.config.past_length , self.config.dim_u),dtype=np.float32)
             )
-        print('train network---由环境变量产生的 u: ' ,  train_u)
 
-        # 为 Kalman Filter 提供LSTM的初始状态
+        # LSTM initial state
         dummy_lstm = tf.nn.rnn_cell.LSTMCell(self.config.alpha_units)
         alpha_lstm_init = dummy_lstm.zero_state(self.config.batch_size * self.ssm_num, tf.float32)
 
@@ -409,7 +401,6 @@ class SharedSSM(object):
                                           Q=train_Q,  # process noise
                                           z=train_target_norm,  # output
                                           u = train_u,
-                                          # mask 这里面会多一维度 (bs,seq , ssm_num ,1)
                                           mask=self.placeholders['past_target_observed'],
                                           mu=mu,
                                           Sigma=Sigma,
@@ -429,7 +420,6 @@ class SharedSSM(object):
             h=alpha_train_states.h[-1]
         )
 
-        # 计算 loss 的batch情况，但是加负号
         self.train_z_mean = tf.math.multiply(self.z_trained_scaled, tf.expand_dims(self.target_scale, 2))
         self.filter_batch_nll_mean = tf.math.reduce_mean(
             tf.math.reduce_mean(-self.filter_ll, axis=-1)
@@ -446,10 +436,10 @@ class SharedSSM(object):
         return self
 
     def build_predict_forward(self):
-        # 对预测域的数据先进行标准化(注：仅使用训练域的 mean 进行 scale)
+        # normalization
         pred_env_norm = tf.math.divide(self.placeholders['pred_environment'] , tf.expand_dims(self.env_scale,1))
         # env_norm = tf.math.multiply(env_norm , self.placeholders['pred_env_observed'])
-        #首先,先对time_feature进行利用
+        
         target_time_rnn_out, _ = tf.nn.dynamic_rnn(
             cell=self.time_feature_lstm,
             inputs=self.placeholders['target_pred_time_feature'],
@@ -461,9 +451,9 @@ class SharedSSM(object):
         pred_Q = tf.multiply(eyes, tf.expand_dims(pred_Q, axis=-1))
         pred_R = self.noise_emission_model(target_time_rnn_out)  # (bs, pred , 1)
         pred_R = tf.expand_dims(pred_R, axis=-1)
-        print('pred network---生成噪声 Q shape : {} , R shape : {}'.format(pred_Q.shape , pred_R.shape))
+        print('pred network--- Q shape : {} , R shape : {}'.format(pred_Q.shape , pred_R.shape))
 
-        # 对 environment 进行处理
+        
         env_rnn_out, _ = tf.nn.dynamic_rnn(
             cell=self.env_lstm,
             inputs=pred_env_norm,
@@ -481,7 +471,7 @@ class SharedSSM(object):
             self.pred_u = tf.constant(
                 np.zeros(shape=(self.ssm_num, self.config.batch_size, self.config.pred_length, self.config.dim_u),dtype=np.float32)
             )
-        print('pred network---环境变量生成的信息：' , self.pred_u)
+        
         self.pred_kf = MultiKalmanFilter( ssm_num = self.ssm_num,
                                           dim_l=self.config.dim_l,
                                           dim_z=self.config.dim_z,
@@ -528,9 +518,8 @@ class SharedSSM(object):
         return self
 
     def train(self):
-        #如果导入已经有的信息,不进行训练
         if self.config.reload_model != '':
-            print('有已经训练好的参数,不需要训练~~~~~')
+            print('Get trained model ~~~~~')
             return
         sess = self.sess
         log_name = '_'.join([
@@ -560,7 +549,7 @@ class SharedSSM(object):
         self.train_log_path = os.path.join(self.config.logs_dir,log_name)
         params_path = os.path.join(self.train_log_path , 'model_params')
         params_path = add_time_mark_to_dir(params_path)
-        print('训练参数保存在 --->', params_path)
+        print('training model stored in --->', params_path)
 
         if not os.path.isdir(self.train_log_path):
             os.makedirs(self.train_log_path)
@@ -572,8 +561,7 @@ class SharedSSM(object):
         train_plot_points = {}
 
         for epoch_no in range(self.config.epochs):
-            #执行一系列操作
-            #产生新的数据集
+            
             tic = time.time()
             epoch_loss = 0.0
 
@@ -587,7 +575,7 @@ class SharedSSM(object):
                         env_batch_input['past_target'] = env_batch_input['past_target'] \
                                 + np.random.normal(loc = self.config.env_noise_mean, scale = self.config.env_noise, size =(self.config.batch_size, self.config.past_length, self.env_dim))
 
-                    # print('第 ',batch_no,'的env_batch_input["past_target"]:',  env_batch_input['past_target'].shape)
+                    
                     feed_dict = {
                         self.placeholders['past_environment'] : env_batch_input['past_target'],
                         self.placeholders['past_env_observed'] : env_batch_input['past_%s' % (FieldName.OBSERVED_VALUES)],
@@ -602,19 +590,11 @@ class SharedSSM(object):
                                             , feed_dict=feed_dict)
                     if epoch_no % 10 == 0 and epoch_no > 0 :
                         forward_state = sess.run(self.train_state,feed_dict = feed_dict )
-                        # 查看 latent state 训练的过程
+                        #  latent state training epoch
                         path = 'plot/latent_state/' + log_name + '/epoch_{}'.format(epoch_no)
                         l_mean = forward_state[0];
                         l_cov = forward_state[1];
                     
-                    # 如果你需要绘图，将此注释取消即可
-                    # 将训练时的 output_mean 和 真实值进行比对 #(ssm_num ,bs , seq)
-                    # batch_pred = sess.run(self.train_z_mean, feed_dict=feed_dict)
-                    # plot_train_pred(path=self.train_log_path,targets=self.config.target, data=target_batch_input['past_target'], pred=batch_pred,
-                    #                 batch=batch_no, epoch=epoch_no, plot_num=3 , plot_length=self.config.past_length
-                    #                 , time_start=target_batch_input['start'], freq=self.config.freq)
-
-
                     epoch_loss += np.sum(batch_nll)
                     avg_epoch_loss = epoch_loss/((batch_no+1)*self.config.batch_size)
 
@@ -625,7 +605,7 @@ class SharedSSM(object):
                         refresh=False,
                     )
             toc = time.time()
-            #将本epoch训练的结果添加到起来
+            
             train_plot_points[epoch_no] = avg_epoch_loss
             logging.info(
                 "Epoch[%d] Elapsed time %.3f seconds",
@@ -645,7 +625,7 @@ class SharedSSM(object):
                 best_epoch_info['epoch_no'],
                 best_epoch_info['filter_nll'],
             )
-            #如果当前 epoch 的结果比之前的要好，则立刻取代，保存
+           
             if avg_epoch_loss < best_epoch_info['filter_nll']:
                 del_previous_model_params(params_path)
                 best_epoch_info['filter_nll'] = avg_epoch_loss
@@ -673,7 +653,6 @@ class SharedSSM(object):
     def predict(self):
         sess = self.sess
 
-        # 如果是 训练之后接着的 predict 直接采用之前 train 产生的save_path
         if hasattr(self ,'train_save_path'):
             path = self.train_save_path
             try:
@@ -684,7 +663,7 @@ class SharedSSM(object):
             finally:
                 print('whatever ! life is still fantastic !')
 
-        #存放预测结果的容器
+        # Prediction Result
         eval_result_root_path = 'evaluate/results{}/{}_length({})_slice({})_past({})_pred({})'.format(
             "" if self.config.env_noise==0 else "_noise",
             self.config.target.replace(',' ,'_'), self.config.timestep , self.config.slice ,self.config.past_length , self.config.pred_length)
@@ -692,7 +671,7 @@ class SharedSSM(object):
             os.makedirs(eval_result_root_path)
         model_result = []; ground_truth_result =[];
 
-        #存放隐状态和background结果的容器
+        # background and latent state
         eval_analysis_root_path = 'evaluate/analysis{}/{}_length({})_slice({})_past({})_pred({})'.format(
             "" if self.config.env_noise==0  else "_noise",
             self.config.target.replace(',' ,'_') ,self.config.timestep , self.config.slice ,self.config.past_length , self.config.pred_length)
@@ -703,7 +682,7 @@ class SharedSSM(object):
 
         
         
-        # 设置 文件预测结果 的文件名
+        # Prediction result path
         if self.config.use_env:
             result_prefix = 'shared_ssm_'
         else:
@@ -716,7 +695,7 @@ class SharedSSM(object):
             + ('_mean_noise(%2f)'%(self.config.env_noise_mean) if self.config.env_noise_mean != 0 else '')
         ))
         model_result_path = add_time_mark_to_file(model_result_path)
-        print('结果保存在-->',model_result_path)
+        print('Prediction result store in-->',model_result_path)
         # 设置 ground truth 的地址
         ground_truth_path = os.path.join(eval_result_root_path,
                 'ground_truth_start({})_freq({})_past({})_pred({}).pkl'.format(
@@ -724,7 +703,7 @@ class SharedSSM(object):
                   , self.config.past_length , self.config.pred_length)
             
         )
-        print('ground_truth的保存的地方：' ,ground_truth_path)
+        print('ground truth store in ' ,ground_truth_path)
 
 
         #不沉迷画图，把预测结果保存到pickle对象里面
@@ -733,15 +712,15 @@ class SharedSSM(object):
                 enumerate(self.env_test_loader , start = 1)
         ):
             batch_no = target_batch[0]
-            print('当前做prediction的是第{}个batch的内容'.format(batch_no))
+            print('No.{} batch are predicting'.format(batch_no))
             target_batch_input = target_batch[1]
             env_batch_input = env_batch[1]
             if target_batch_input != None and env_batch_input != None:
-                # 不重复产生ground truth
+                # no duplicate ground truth
                 if not os.path.exists(ground_truth_path):
                     ground_truth_result.append(target_batch_input)
 
-                # 这里要注意，因为我的batch_size被固定了，所以，这里要添加一个对数量的补全
+                # complete the num as batch size
                 target_batch_complete , bs = complete_batch(batch = target_batch_input , batch_size = self.config.batch_size)
                 env_batch_complete , _ = complete_batch(batch=env_batch_input, batch_size=self.config.batch_size)
                 
@@ -765,7 +744,7 @@ class SharedSSM(object):
                     self.placeholders['target_pred_time_feature'] : target_batch_complete['future_time_feat']
                 }
 
-                # 这个部分只是为了方便画图，所以才把训练时候的结果也运行出来
+                
                 batch_train_z, z_scale = sess.run([self.train_z_mean[:,:bs], self.target_scale[:,:bs]], feed_dict=feed_dict)
                 batch_pred_l_mean , batch_pred_l_cov , batch_pred_u = sess.run(
                     [self.pred_l_mean[:,:,:bs] , self.pred_l_cov[:,:,:bs] , self.pred_u[:,:bs]] , feed_dict = feed_dict
@@ -775,30 +754,7 @@ class SharedSSM(object):
                 )
 
               
-
-                # 以下两个变量主要用于绘图
-                # batch_ground_truth = np.concatenate(
-                #     [target_batch_complete['past_target'] , target_batch_complete['future_target']]
-                #     ,axis = 2
-                # )[:,:bs]
-                #  这里的mean_pred是不进行采样的
-                # mean_pred = np.concatenate(
-                #     [batch_train_z, np.multiply(batch_pred_z_mean_scaled, np.expand_dims(z_scale, axis=2))]
-                #     , axis=2
-                # )
-                # 以下代码用于输出当前训练的预测图，但是现在为了比较多个算法的性能，
-                # if hasattr(self , 'train_log_path'):
-                #     pred_plot_path = self.train_log_path
-                # else:
-                #     pred_plot_path = os.path.join(self.config.logs_dir, self.config.reload_model)
-                # plot_train_pred(path=pred_plot_path,targets=self.config.target,data=ground_truth
-                #                 ,pred=mean_pred,epoch='__TEST__',batch=batch_no, plot_num=bs,
-                #                 plot_length=self.config.pred_length*5,
-                #                 time_start=target_batch_complete['start'],freq=self.config.freq
-                # )
                 
-                
-                # 存储预测值， ground_truth, latent state的信息
                 prediction_analysis['l_mean'].append(
                     np.transpose(batch_pred_l_mean ,[1,2,0,3])
                 ) #(ssm, bs, seq , dim_l)
@@ -811,7 +767,7 @@ class SharedSSM(object):
                 prediction_analysis['z_mean_scaled'].append(batch_pred_z_mean_scaled)
 
 
-                # 存储模型的最终输出结果
+                
                 if self.config.num_samples == 1:
                     mean_pred = np.concatenate(
                         [batch_train_z , np.multiply(batch_pred_z_mean_scaled, np.expand_dims(z_scale , axis=2))]
@@ -826,7 +782,7 @@ class SharedSSM(object):
                     model_result.append(pred_samples)
                     pass
 
-        #处理分析结果(analysis/)，指定目录
+        # analysis result (analysis/)
         for name , item in prediction_analysis.items():
             item = np.concatenate(item , axis=1)
             prediction_analysis[name] = item
@@ -841,7 +797,7 @@ class SharedSSM(object):
         
         
 
-        # 处理的是预测的结果(results/)
+        # prediction result (results/)
         model_result = np.concatenate(model_result, axis=1) #(ssm_num ,bs, seq,num_samples,1)
         with open(model_result_path , 'wb') as fp:
             pickle.dump(model_result , fp)

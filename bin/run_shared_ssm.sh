@@ -52,7 +52,6 @@ batch_num='14'
 batch_size='32'
 epochs='100'
 num_samples='100'
-#之前的版本u为10 l是5
 dim_u='5'
 dim_l='4'
 drop_prob='0.5'
@@ -78,19 +77,3 @@ do
     done
   done
 done
-
-# USED FOR RELOAD MODEL
-# for reload_time in '' 1 2 3 4 5
-# do
-#     python gluonts/lzl_shared_ssm/run_shared_ssm.py --reload_model=$reload_model --reload_time=$reload_time --logs_dir=$logs_dir \
-#     --target=$target --environment=$environment --start=$start --timestep=$timestep --past_length=$past_length \
-# --pred_length=$prediction_length --slice=$slice --batch_size=$batch_size --num_batches_per_epoch=$batch_num --epochs=$epochs \
-#     --use_env=$use_env --num_samples=$num_samples --freq=$freq --dim_l=$dim_l --dim_u=$dim_u --K=$K
-# done
-
-#! [ command ] 在判断语句前后都要空格
-# 如果需要筛选某些超参，可以在这里进行判断选择
-# if [ $K -eq 4 ] && [ $maxlags -eq 6 ]; then
-#     echo ignore
-#     continue;
-# fi

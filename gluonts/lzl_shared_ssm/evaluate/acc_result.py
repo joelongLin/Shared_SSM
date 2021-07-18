@@ -29,7 +29,7 @@ length = 503
 # target = 'UKX,VIX,SPX,SHSZ300,NKY'
 target = "btc,eth"
 
-# Shared ssm 专属的超参
+# SSSM parameter
 dim_l = 4
 K = 3;
 dim_u = 5
@@ -57,12 +57,11 @@ for file in os.listdir(eval_result_root):
     if 'ground_truth' in file:
         ground_truth_path = file
         break
-assert ground_truth_path != None,'当前当前并没有ground truth~~'
+assert ground_truth_path != None,'NO ground truth~~'
 
 
 if __name__ == "__main__":
 
-    # 这里对ground_truth进行合并,并且只保留两个部分，一个是start, target
     time_start = [] ; ground_truth_target = [];
     with open(os.path.join(eval_result_root , ground_truth_path), 'rb') as fp:
         ground_truth = pickle.load(fp)
@@ -75,7 +74,7 @@ if __name__ == "__main__":
     ground_truth_target = np.concatenate(ground_truth_target, axis=1).squeeze(axis=-1)
     ground_truth_target[ground_truth_target == 0] = np.NaN
 
-    # 对模型产生的数据进行读取
+    # RESULT OF MODEL
     shared_ssm_result = []
     shared_ssm_no_sample = []
     deep_state_result = []
@@ -91,7 +90,7 @@ if __name__ == "__main__":
 
         shared_ssm_con = 'shared_ssm' in path
         shared_ssm_con_2 = 'num_samples' in path
-        #超参选择
+        # SSSM hyperparameter 
         shared_ssm_con_3 = 'lags({})'.format(lags) in path \
         and 'u({})'.format(dim_u) in path \
         and 'l({})'.format(dim_l) in path \
@@ -107,9 +106,6 @@ if __name__ == "__main__":
                     real=ground_truth_target[:, :, -pred_length:],
                     predict=np.mean(single_result, axis=2)[:, :, -pred_length:]
                 )
-                # mse = np.nanmean(
-                #     np.square(np.mean(single_result,axis=2)[:,:,-pred_length:] - ground_truth_target[:, :, -pred_length:]))
-                # mse = np.nanmean(np.square(np.mean(single_result, 2) - ground_truth_target[:, :, -pred_length:]))
                 acc = np.round(acc ,2 )
                 shared_ssm_result.append(acc)
                 continue
@@ -131,7 +127,6 @@ if __name__ == "__main__":
         elif 'deepstate' in path:
             with open(os.path.join(eval_result_root, path), 'rb') as fp:
                 single_result = pickle.load(fp)
-                # mse = np.nanmean(np.square(np.mean(single_result, 2) - ground_truth_target[:, :, -pred_length:]))
                 acc = calculate_accuracy(
                     real=ground_truth_target[:, :, -pred_length:],
                     predict=np.mean(single_result, 2)
@@ -144,8 +139,6 @@ if __name__ == "__main__":
             with open(os.path.join(eval_result_root , path) , 'rb') as fp:
                 single_result = pickle.load(fp)
                 single_result = single_result.squeeze(axis=-1)
-                # mse = np.nanmean(
-                #     np.square(single_result[:, :, -pred_length:] - ground_truth_target[:, :, -pred_length:]))
                 if len(single_result.shape) == 3:
                     acc = calculate_accuracy(
                         real=ground_truth_target[:, :, -pred_length:],
@@ -163,12 +156,10 @@ if __name__ == "__main__":
                 continue
 
         elif 'common_lstm' in path:
-            # print('lstm result file name -->' , path)
             with open(os.path.join(eval_result_root , path) , 'rb') as fp:
                 single_result = pickle.load(fp)
                 single_result = single_result.squeeze(axis=-1)
-                # mse = np.nanmean(
-                #     np.square(single_result[:, :, -pred_length:] - ground_truth_target[:, :, -pred_length:]))
+        
                 acc = calculate_accuracy(
                     real=ground_truth_target[:, :, -pred_length:],
                     predict=single_result[:, :, -pred_length:]
@@ -180,7 +171,7 @@ if __name__ == "__main__":
         elif 'prophet' in path:
             with open(os.path.join(eval_result_root, path), 'rb') as fp:
                 single_result = pickle.load(fp)
-                # mse = np.nanmean(np.square(np.mean(single_result, 2) - ground_truth_target[:, :, -pred_length:]))
+                
                 acc = calculate_accuracy(
                     real=ground_truth_target[:, :, -pred_length:],
                     predict=np.mean(single_result, 2)
@@ -194,7 +185,7 @@ if __name__ == "__main__":
         elif 'deepar' in path:
             with open(os.path.join(eval_result_root, path), 'rb') as fp:
                 single_result = pickle.load(fp)
-                # mse = np.nanmean(np.square(np.mean(single_result, 2) - ground_truth_target[:, :, -pred_length:]))
+                
                 acc = calculate_accuracy(
                     real=ground_truth_target[:, :, -pred_length:],
                     predict=np.mean(single_result, 2) if len(single_result.shape)==4 else single_result
@@ -209,7 +200,7 @@ if __name__ == "__main__":
                 if "lag({})".format(lags) not in path:
                     continue;
                 single_result = pickle.load(fp)
-                # mse = np.nanmean(np.square(np.mean(single_result, 2) - ground_truth_target[:, :, -pred_length:]))
+                
                 acc = calculate_accuracy(
                     real=ground_truth_target[:, :, -pred_length:],
                     predict=np.mean(single_result, 2) if len(single_result.shape)==4 else single_result
@@ -224,7 +215,7 @@ if __name__ == "__main__":
                 if "lag({})".format(lags) not in path:
                     continue;
                 single_result = pickle.load(fp)
-                # mse = np.nanmean(np.square(np.mean(single_result, 2) - ground_truth_target[:, :, -pred_length:]))
+                
                 acc = calculate_accuracy(
                     real=ground_truth_target[:, :, -pred_length:],
                     predict=np.mean(single_result, 2) if len(single_result.shape)==4 else single_result
@@ -239,7 +230,7 @@ if __name__ == "__main__":
                 if "lag({})".format(lags) not in path:
                     continue;
                 single_result = pickle.load(fp)
-                # mse = np.nanmean(np.square(np.mean(single_result, 2) - ground_truth_target[:, :, -pred_length:]))
+                
                 acc = calculate_accuracy(
                     real=ground_truth_target[:, :, -pred_length:],
                     predict=np.mean(single_result, 2) if len(single_result.shape)==4 else single_result
@@ -253,7 +244,7 @@ if __name__ == "__main__":
 
 
         else:
-            # print('你可能命名有问题 -->' , path)
+            print('Invalid output -->' , path)
             pass
 
 
@@ -282,9 +273,9 @@ if __name__ == "__main__":
             acc_result[model] = DEEPSTATE_result
         if model == 'PROPHET':
             acc_result[model] = PROPHET_result
-    print('---acc 指标结果 ---')
+    print('---acc START ---')
     for key, value in acc_result.items():
         print(key)
         for i in value:
             print("   ", i);
-    print('---acc 指标完 ---')
+    print('---acc END ---')

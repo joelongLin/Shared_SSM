@@ -15,16 +15,15 @@ from gluonts.core.component import DType
 from gluonts.dataset.common import DataEntry, Dataset
 from gluonts.transform import Transformation
 
-# 完全参考gluonts 给定的API
+
 DataBatch = Dict[str, Any]
 
-# 完全参考gluonts,用于切分序列为的 past 以及 future
 def _past(ts_field):
     return f"past_{ts_field}"
 def _future(ts_field):
     return f"future_{ts_field}"
 def _stack(value1 , value2 , dim):
-    assert abs(len(value1.shape) - len(value2.shape)) <= 1 , "两者维度差距过大"
+    assert abs(len(value1.shape) - len(value2.shape)) <= 1 , "dimension diff to big"
     if len(value1.shape) == len(value2.shape):
         return np.stack([value1, value2],axis=dim)
     elif len(value1.shape) > len(value2.shape):
@@ -34,9 +33,7 @@ def _stack(value1 , value2 , dim):
 
 class BatchBuffer_NoMX:
     '''
-    参考于 gluonts, 用于去除 mxnet 模块
-    此类 封装的是 batch 的功能
-    可以加入sample使其堆叠为batch
+    Refer to gluonts without MXNet
     '''
     def __init__(
         self, batch_size: int, dtype: DType = np.float32
@@ -84,7 +81,6 @@ class BatchBuffer_NoMX:
             li = self._buffers[key]
             self._buffers[key] = [li[i] for i in perm]
 
-#TODO：序列都对应了一个Dataset, 而每个Dataset确对应不同的 DataLoader
 def mergeIterOut(
         loaders : List[Iterable],
         fields : List[str],
@@ -113,7 +109,6 @@ def mergeIterOut(
                 pass
         yield batch
 
-#将目标序列的单序列拼接起来
 def stackIterOut(
         loaders : List[Iterable],
         fields : List[str] ,
@@ -152,9 +147,6 @@ def stackIterOut(
 
 class DataLoader_NoMX(Iterable[DataEntry]):
     """
-   一个来自于gluonts的DataLoader抽象类
-   在这里去除其 Mxnet的部分
-
     Parameters
     ----------
     dataset
@@ -181,13 +173,6 @@ class DataLoader_NoMX(Iterable[DataEntry]):
 
 class TrainDataLoader_OnlyPast(DataLoader_NoMX):
        '''
-        为Shared_SSM模型提供 训练时的数据
-
-       因为数据预处理时已经切好片了，每条时间序列，所以is_train = False
-       gluonts提供的的TrainDataLoader类因为 Dataset是大于等于 past+pred 的序列，因此具备了采样的操作
-       而我们这里的数据集只有 past长度，且根本不需要采样。
-
-       在这里如果 is_train = False 就意味着不需要采样，需要帮我们产生 future_time_feature
 
        Parameters
        ----------
@@ -241,7 +226,7 @@ class TrainDataLoader_OnlyPast(DataLoader_NoMX):
                except StopIteration:
                    raise Exception("empty dataset")
                else:
-                   for x in itertools.chain([], collection):  # 在这里修改，使得代码不会重复遍历第一个 collection
+                   for x in itertools.chain([], collection):  
                        yield x
 
        def __len__(self) -> int:
@@ -252,7 +237,7 @@ class TrainDataLoader_OnlyPast(DataLoader_NoMX):
            if self._cur_iter is None:
                self._cur_iter = self.transform(
                    self._iterate_forever(self.dataset), is_train=False
-               )  # 在使用 TrainDataLoader 的时候 会默认地使用 is_train=True
+               )  
            assert self._cur_iter is not None
            while True:
                data_entry = next(self._cur_iter)
@@ -266,9 +251,9 @@ class TrainDataLoader_OnlyPast(DataLoader_NoMX):
                    ):
                        yield batch
                        batch_count += 1
-                       # 这里面使用重定向 generator
+                       
                        if batch_count >= self.num_batches_per_epoch:
-                           #就是因为这个没有置0 ，才导致后面的训练样本不全面
+                           
                            batch_count = 0
                            self._cur_iter = self.transform(
                                self._iterate_forever(self.dataset), is_train=False
@@ -276,12 +261,6 @@ class TrainDataLoader_OnlyPast(DataLoader_NoMX):
 
 class InferenceDataLoader_WithFuture(DataLoader_NoMX):
     """
-    一个为Shared_SSM模型提供预测时数据的 DataLoader
-
-    但是经过数据预处理时放入此InferenceLoader的数据集长度永远为 past+pred
-    , 是包含预测域信息的, 所以此时我们不需要这个loader帮我们产生future 的 time_feature, 所以is_train=True
-
-    在这里如果 is_train = True就意味着需要采样(只一次)，不需要帮我们产生 future_time_feature
 
     Parameters
 

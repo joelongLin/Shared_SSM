@@ -21,7 +21,6 @@ class MultiKalmanFilter(object):
         self.eye_init = lambda shape, dtype=np.float32: np.eye(*shape, dtype=dtype)
 
         # Pop all variables
-        # 原代码 pop 初始化的维度都不对，所以删除
         self.mu = kwargs.pop('mu', None)
         self.Sigma = kwargs.pop('Sigma',None)
 
@@ -66,9 +65,9 @@ class MultiKalmanFilter(object):
 
     def forward_step_fn(self, params, inputs):
         """
-        使用 tf.scan 完成 一步 Filter 算法
-        输入： p(l_t|z_(1:t-1)) , z_t
-        输出： p(l_t|z_(1:t)) , p(l_(t+1) | z_(1:t))
+       
+        INPUT： p(l_t|z_(1:t-1)) , z_t
+        OUTPUT： p(l_t|z_(1:t)) , p(l_(t+1) | z_(1:t))
         """
         mu_pred, Sigma_pred, _, _, alpha, state, _, _, _  = params
         valueInputs , Q , R = inputs #(ssm_num, bs  ,2+dim_u) , (bs ,dim_l ,dim_l)
@@ -84,20 +83,18 @@ class MultiKalmanFilter(object):
         z_pred = tf.squeeze(tf.matmul(C, tf.expand_dims(mu_pred, -1)),axis=-1)  # (ssm_num , bs, dim_z)
         r = z - z_pred  # (ssm_num ,bs, dim_z)
 
-        # R的维度(bs,dim_z,dim_z) C 的维度(ssm_num , bs , dim_z , dim_l)
+        
         S = tf.matmul(tf.matmul(C, Sigma_pred), C, transpose_b=True) + R  # (ssm_num , bs, dim_z, dim_z)
 
         S_inv = tf.matrix_inverse(S)
         K = tf.matmul(tf.matmul(Sigma_pred, C, transpose_b=True), S_inv)  # (ssm_num ,bs, dim_l, dim_z)
 
         # For missing values, set to 0 the Kalman gain matrix
-        # multiply 这个方法是从高维开始对齐的
         K = tf.multiply(tf.expand_dims(mask, -1), K) #(ssm_num , bs, dim_l , dim_z)
 
         # Get current mu and Sigma
         mu_t = mu_pred + tf.squeeze(tf.matmul(K, tf.expand_dims(r, -1)),axis=-1)  # (ssm_num , bs, dim_l)
         I_KC = self._I - tf.matmul(K, C)  # (ssm_num , bs, dim_l, dim_l)
-        # TODO: 这里的 Sigma_t 的计算方式不太一样
         Sigma_t = tf.matmul(tf.matmul(I_KC, Sigma_pred), I_KC, transpose_b=True) + self._sast(R, K)  # (ssm_num , bs, dim_l, dim_l)
 
         # Mixture of A
@@ -119,10 +116,9 @@ class MultiKalmanFilter(object):
 
     def backward_step_fn(self, params, inputs):
         """
-        使用 tf.scan 完成 一步 Smoother 算法
-        输入： p(l_t|z_(1:t) , u_(1:t))  t = T,...,2
+        INPUT： p(l_t|z_(1:t) , u_(1:t))  t = T,...,2
               p(l_t | l_(t-1) )  t= T,...2
-        输出： p(l_t|z_(1:T))
+        OUTPUT： p(l_t|z_(1:T))
         """
         mu_back, Sigma_back = params
         mu_pred_tp1, Sigma_pred_tp1, mu_filt_t, Sigma_filt_t, A = inputs
@@ -137,11 +133,8 @@ class MultiKalmanFilter(object):
 
     def compute_forwards(self, reuse=None):
         """
-        计算 Kalman Filter 的前向， 同时计算 filter 之后的log_p
-        是一种 on_line 设置
-        # 注意这里的 bs 前面都多了一个 ssm_num 的维度，已经增加
-        输入: 初始状态 l_0 , z_(1:T)
-        输出： p(l_t | l_(t-1) , u_t) , t= 2,...,T+1
+        input: l_0 , z_(1:T)
+        output： p(l_t | l_(t-1) , u_t) , t= 2,...,T+1
               p(l_t | x_(1:t) , u_(1:t)) , t = 1,...,T
         """
 
@@ -155,7 +148,7 @@ class MultiKalmanFilter(object):
         z_prev = tf.expand_dims(self.z_0, 1)  # (ssm_num,1, 1)
         z_prev = tf.tile(z_prev, (1,tf.shape(self.mu)[1], 1)) #(ssm_num , bs , 1)
         alpha, state = self.alpha_fn(z_prev, self.state, reuse= reuse)
-        # 用于占位的矩阵 A B C
+        
         dummy_init_A = tf.ones([self.Sigma.get_shape()[0] , self.Sigma.get_shape()[1], self.dim_l, self.dim_l])
         dummy_init_B = tf.ones([self.Sigma.get_shape()[0], self.Sigma.get_shape()[1], self.dim_l, self.dim_u])
         dummy_init_C = tf.ones([self.Sigma.get_shape()[0], self.Sigma.get_shape()[1], self.dim_z, self.dim_l])
@@ -167,12 +160,10 @@ class MultiKalmanFilter(object):
 
     def compute_backwards(self, forward_states):
         '''
-        计算 Kalman Smoother 的 后向操作
-        是一种 off_line 的设置
-        输入: 初始状态 p(l_T | z_(1:T), u_(1:T))
+        INPUT: 初始状态 p(l_T | z_(1:T), u_(1:T))
               p(l_t | l_(t-1) , u_t) , t= 2,...,T
               p(l_t | z_(1:t) , u_(1:t)) , t= 1,....,T
-        输出： p(l_t | z_(1:T) , u_(1:T)) , t= 2,...,T
+        OUTPUT： p(l_t | z_(1:T) , u_(1:T)) , t= 2,...,T
 
         '''
         mu_pred, Sigma_pred, mu_filt, Sigma_filt, alpha, state, A, B, C = forward_states
@@ -184,28 +175,28 @@ class MultiKalmanFilter(object):
                        Sigma_filt[:-1, :, :, : , :],
                        A[:-1]]
 
-        # 对 seq 维进行逆反
+        
         dims = [0]
         for i, state in enumerate(states_scan):
             states_scan[i] = tf.reverse(state, dims)
 
         # Kalman Smoother
-        # 给定 l_(T+1) | T 以及 l_(T) | T 最为初始状态
+        
         backward_states = tf.scan(self.backward_step_fn, states_scan,
                                   initializer=(mu_filt[-1, :, :, :], Sigma_filt[-1, :, :, :]), parallel_iterations=1,
                                   name='backward')
 
-        # 将时间维逆反回来
+        
         backward_states = list(backward_states)
         dims = [0]
         for i, state in enumerate(backward_states):
             backward_states[i] = tf.reverse(state, dims)
 
-        # 将 l_T | T 添加回来
+        
         backward_states[0] = tf.concat([backward_states[0], mu_filt[-1:]], axis=0)
         backward_states[1] = tf.concat([backward_states[1], Sigma_filt[-1:]], axis=0) #(seq, ssm_num , bs , dim_z , dim_z)
 
-        #将期望中多余的维度去除掉
+        
         backward_states[0] = backward_states[0][... , 0] #(seq ,ssm_num, bs, dim_z)
 
         return backward_states, A, B, C, alpha
@@ -223,7 +214,7 @@ class MultiKalmanFilter(object):
         mu_smooth = backward_states[0]  #(ssm_num ,bs ,seq , dim_l)
         Sigma_smooth = backward_states[1]  #(ssm_num , bs , seq , dim_l, dim_l)
 
-        # 从 smooth 之后的分布进行采样
+        
         mvn_smooth = tfp.distributions.MultivariateNormalTriL(mu_smooth, tf.cholesky(Sigma_smooth))
         l_smooth = mvn_smooth.sample() #(ssm_num ,bs , seq , dim_l)
 
@@ -237,7 +228,6 @@ class MultiKalmanFilter(object):
         l_t_transition = tf.reshape(l_smooth[:,:, 1:], [l_smooth.shape[0],-1, self.dim_l]) #(ssm_num ,bs*(seq-1) , dim_l)
 
         # To exploit this we then write N(z_t; Az_tm1 + Bu_t, Q) as N(z_t - Az_tm1 - Bu_t; 0, Q)
-        #因为tfp提供的API, 在这里需要对 mvn_transition 里面的的 loc 和 scale 进行维度修正
         trans_centered = l_t_transition - mu_transition #(ssm_num , bs*(seq-1) , dim_l)
         trans_covariance = tf.tile(tf.expand_dims(self.Q ,0), [trans_centered.shape[0],1,1,1,1])
         trans_covariance = tf.reshape(trans_covariance[:,:,1:], [l_smooth.shape[0],-1, self.dim_l , self.dim_l])
@@ -286,7 +276,6 @@ class MultiKalmanFilter(object):
                  output_mean #(seq , ssm_num ,bs)
         '''
         # self.z  #(ssm_num ,bs, seq, dim_z)
-        # C_t  l_(t | t-1) 使用第一个 mu
         mu_pred = tf.concat([tf.expand_dims(self.mu,0) , mu_pred ] , axis=0)
         Sigma_pred = tf.concat([tf.expand_dims(self.Sigma , 0) , Sigma_pred] , axis=0)
         output_mean = tf.squeeze(tf.matmul(C , tf.expand_dims(mu_pred,-1)) ,-1) #(seq, ssm_num ,bs , dim_z)
@@ -294,9 +283,7 @@ class MultiKalmanFilter(object):
         R = tf.transpose(R,[2,0,1,3,4])
         output_cov = tf.matmul(tf.matmul(C, Sigma_pred), C, transpose_b=True) + R #(seq , ssm_num ,bs, dim_z, dim_z)
         L_output_cov = tf.linalg.cholesky(output_cov)
-        # TODO: 看到其他地方都是用 0 作为 期望的，所以这里改一下
         mvg = tfp.distributions.MultivariateNormalTriL(output_mean ,L_output_cov)
-        # mvg = MultivariateGaussian(output_mean , )
         mask = tf.squeeze(self.mask, -1)  # self.mask #(ssm_num ,bs,seq , 1) -->#(ssm_num, bs,seq)
         z_time_first = tf.transpose(self.z , [2,0,1,3]) #(seq, ssm_num ,bs, dim_z)
         log_q_seq = mvg.log_prob(z_time_first) #(seq , ssm_num ,bs )
@@ -306,13 +293,13 @@ class MultiKalmanFilter(object):
 
     def filter(self):
         '''
-        :return: 计算
-        p(z_t|z_(1:t-1)) 期望
-        p(l_t|z_(1:t))  期望以及方差
+        :return: 
+        p(z_t|z_(1:t-1)) EXPECTATION
+        p(l_t|z_(1:t))  MEAN & STD
         A(t | z_(1:t))  B(t | z_(1:t))
         C(t | z_(1:t-1))
         alpha(t | z_(1:t))
-        alpha_lstm_last_state 用于作用在预测的时候
+        alpha_lstm_last_state 
         '''
         #  暂时把compute forward 函数里面的reuse 给去除
         mu_pred, Sigma_pred, mu_filt, Sigma_filt, alpha, state,  A, B, C  = forward_states = \
@@ -328,17 +315,6 @@ class MultiKalmanFilter(object):
          # tuple(forward_states) , tf.transpose(A, [1, 2, 0, 3, 4]), tf.transpose(B, [1, 2, 0, 3, 4]),
          #  tf.transpose(C, [1, 2, 0, 3, 4]), tf.transpose(alpha, [1, 2, 0, 3])
         return z_pred_mean , pred_state, alpha[-1], state  , log_p_seq , forward_states
-
-    def smooth(self):
-        backward_states, A, B, C, alpha = self.compute_backwards(self.compute_forwards())
-        # Swap batch dimension and time dimension
-        backward_states[0] = tf.transpose(backward_states[0], [1, 2, 0, 3])
-        backward_states[1] = tf.transpose(backward_states[1], [1, 2, 0, 3, 4])
-        return tuple(backward_states), \
-               tf.transpose(A, [1, 2, 0, 3, 4]),\
-               tf.transpose(B, [1, 2, 0, 3, 4]),\
-               tf.transpose(C, [1, 2, 0, 3, 4]),\
-               tf.transpose(alpha, [1, 2, 0, 3])
 
     def _sast(self, R, K):
         '''

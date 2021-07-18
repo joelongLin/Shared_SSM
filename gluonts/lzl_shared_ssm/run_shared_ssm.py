@@ -29,7 +29,7 @@ cl.DEFINE_bool('scaling' , True , 'whether use Mean Scaler to preprocess the dat
 cl.DEFINE_string('target' , 'btc,eth' , 'Name of the target dataset')
 cl.DEFINE_string('environment' , 'gold' , 'Name of the dataset ')
 cl.DEFINE_string('start' , '2018-08-02' ,'start of the training range')
-cl.DEFINE_integer('timestep' , 503 , 'length of the series') #这个序列的长度实际上也决定了样本数量的大小
+cl.DEFINE_integer('timestep' , 503 , 'length of the series') 
 cl.DEFINE_string('slice' , 'overlap' , 'how to slice the dataset')
 cl.DEFINE_string('freq','1D','Frequency of the data to train on and predict')
 cl.DEFINE_integer('past_length' ,90,'This is the length of the training time series')
@@ -92,18 +92,9 @@ def main(_):
             .build_module().build_train_forward().build_predict_forward().initialize_variables()
         sharedSSM.train()
         sharedSSM.predict()
-        # sharedSSM.evaluate()
 
 
 
 if __name__ == '__main__':
    tf.app.run()
 
-
-# for i in config:
-#     try:
-#         print(i , ':' , eval('config.{}'.format(i)))
-#     except:
-#         print('当前 ' , i ,' 属性获取有问题')
-#         continue
-# exit()

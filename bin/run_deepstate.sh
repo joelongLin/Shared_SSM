@@ -2,7 +2,6 @@
 #source activate gluonts
 #frozen
 
-source activate tf_mx
 past='60'
 pred='3'
 slice='overlap'
