@@ -29,21 +29,21 @@ import argparse
 from data_info import datasets_info,DatasetInfo
 
 parser = argparse.ArgumentParser(description="data")
-parser.add_argument('-st' ,'--start' , type=str , help='数据集开始的时间', default='2013-04-15 12:00:00')
-parser.add_argument('-d','--dataset', type=str, help='需要重新生成的数据的名称',default="pressure")
-parser.add_argument('-t','--train_length', type=int, help='数据集训练长度', default=60)
-parser.add_argument('-p'  ,'--pred_length' , type = int , help = '需要预测的长度' , default=5)
-parser.add_argument('-s'  ,'--slice' , type = str , help = '需要预测的长度' , default='overlap')
-parser.add_argument('-n' , '--num_time_steps' , type=int  , help='时间步的数量' , default=1177)
-parser.add_argument('-f' , '--freq' , type=str  , help='时间间隔' , default='1H')
+parser.add_argument('-st' ,'--start' , type=str , help='start time of dataset', default='2013-04-15 12:00:00')
+parser.add_argument('-d','--dataset', type=str, help='name of the needed dataset',default="pressure")
+parser.add_argument('-t','--train_length', type=int, help='training length', default=60)
+parser.add_argument('-p'  ,'--pred_length' , type = int , help = 'prediction length' , default=5)
+parser.add_argument('-s'  ,'--slice' , type = str , help = 'slice style' , default='overlap')
+parser.add_argument('-n' , '--num_time_steps' , type=int  , help='timestep of the dataset' , default=1177)
+parser.add_argument('-f' , '--freq' , type=str  , help='frequency of the dataset' , default='1H')
 args = parser.parse_args()
 # change "_"  in start
 if("_" in args.start):
     args.start = args.start.replace("_", " ")
 
-# 切割完之后， 除了目标序列target_slice 之外
-# 我去掉了DeepState 里面的 feat_static_cat, 因为真的不用给样本进行编号
-# 此方法用于 stride = 1, 完全滑动窗口
+
+
+# slice the dataset with stride = 1
 def slice_df_overlap(
     dataframe ,window_size,past_size
 ):

@@ -33,7 +33,7 @@ batch_num='14'
 # prediction_length='1'
 # batch_num='80'
 
-# air quality 数据集
+# air quality dataset
 # (60, {1,3,5}, 35)
 # use_env='True'
 # logs_dir="logs/air_quality(shared_ssm)"

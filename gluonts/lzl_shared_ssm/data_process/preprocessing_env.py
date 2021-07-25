@@ -7,11 +7,9 @@ import os
 if 'lzl_shared_ssm' in os.getcwd():
         if 'data_process' in os.getcwd():
             os.chdir('..')
-        # print('------当前与处理数据的路径：', os.getcwd() ,'-------')
 else:
-    # print('处理数据的时候，请先进入finance的主目录')
     os.chdir('gluonts/lzl_shared_ssm')
-# 为了能够让 代码直接使用 ../gluon/gluonts/下的代码
+
 import sys
 sys.path.insert(0,
     os.path.abspath(os.path.join(os.getcwd(), "../.."))
@@ -31,22 +29,22 @@ parser = argparse.ArgumentParser(description="data")
 
 # cryptcurrency : btc eth 503 gold 2018-08-02
 # economic indices : UKX VIX SPX SHSZ300 NKY 2606 SX5E,DXY '2008-01-04'
-parser.add_argument('-st' ,'--start' , type=str , help='数据集开始的时间', default='2018-08-02')
-parser.add_argument('-d','--dataset', type=str, help='需要重新生成的数据的名称',default='btc')
-parser.add_argument('-e' , '--env' , type=str, help='赋值给 feat_dynamic_real 的特征', default='gold')
+parser.add_argument('-st' ,'--start' , type=str , help='start time of dataset', default='2018-08-02')
+parser.add_argument('-d','--dataset', type=str, help='name of the needed dataset',default='btc')
+parser.add_argument('-e' , '--env' , type=str, help=' feat_dynamic_real ', default='gold')
 parser.add_argument('-l' , '--lags' , type=int, help='featu_dynamic_real and target series lag', default=5)
-parser.add_argument('-t','--train_length', type=int, help='数据集训练长度', default=90)
-parser.add_argument('-p'  ,'--pred_length' , type = int , help = '需要预测的长度' , default=5)
-parser.add_argument('-s'  ,'--slice' , type = str , help = '需要预测的长度' , default='overlap')
-parser.add_argument('-n' , '--num_time_steps' , type=int  , help='时间步的数量' , default=503)
-parser.add_argument('-f' , '--freq' , type=str  , help='时间间隔' , default='1D')
+parser.add_argument('-t','--train_length', type=int, help='training length', default=90)
+parser.add_argument('-p'  ,'--pred_length' , type = int , help = 'prediction length' , default=5)
+parser.add_argument('-s'  ,'--slice' , type = str , help = 'prediction length' , default='overlap')
+parser.add_argument('-n' , '--num_time_steps' , type=int  , help='timestep of the dataset' , default=503)
+parser.add_argument('-f' , '--freq' , type=str  , help='frequency of the dataset' , default='1D')
 args = parser.parse_args()
 # change "_"  in start
 if("_" in args.start):
     args.start = args.start.replace("_", " ")
 
-# 切割完之后， 除了目标序列target_slice 之外
-# 此方法用于 stride = 1, 完全滑动窗口
+
+# slice the dataset with stride = 1
 def slice_df_overlap(
     dataframe ,window_size,past_size
 ):

@@ -12,7 +12,7 @@ from pandas.tseries.frequencies import to_offset
 TARGET_DIM = 4
 def time_format_from_frequency_str(freq_str: str) :
     """
-    根据freq str 返回合适的 time_stamp format
+    get suitable time_stamp format for this frequency
     Parameters
     ----------
 
@@ -81,9 +81,7 @@ def create_dataset_if_not_exist(paths, start, past_length , pred_length , slice 
 
 def add_time_mark_to_file(path):
     '''
-    给重复的文件名添加 time 字段
-    :param path: 路径
-    :return: 返回新的路径名
+    add time for the duplicated files
     '''
     count = 1
     if not os.path.exists(path):
@@ -100,9 +98,7 @@ def add_time_mark_to_file(path):
 
 def add_time_mark_to_dir(path):
     '''
-    给已经存在的文件夹添加 time 字段
-    :param path: 路径
-    :return: 新的文件夹路径
+    add time for the duplicated directory
     '''
     if not os.path.exists(path):
         return path
@@ -121,10 +117,10 @@ def weighted_average(
    metrics, weights = None, axis=None
 ):
     """
-    计算加权平均
+    compute weighted average
     metrics  #(ssm_num , bs,seq_length )
     weights  #(ssm_num , bs , seq_length)
-    axis   metrics中需要加权的
+    axis   
     """
     import tensorflow as tf
     if weights is not None:
@@ -135,11 +131,6 @@ def weighted_average(
         return tf.math.reduce_mean(metrics, axis=axis)
 
 def sample_without_put_back(samples, size):
-    '''
-    :param samples: 需要进行采样的集合
-    :param size: 采样的大小
-    :return: 不放回的采样
-    '''
 
     result = []
     for i in range(size):
@@ -151,26 +142,24 @@ def sample_without_put_back(samples, size):
 
 def plot_train_pred(path, targets_name, data, pred, batch, epoch, plot_num, plot_length, time_start, freq, nan_data=0):
     '''
-    :param path: 存放图片的地址
-    :param targets_name: 预测数据集的名称
-    :param data: 真实数据 #(ssm_num , bs , seq , 1)
-    :param nan_data 缺失值的代表值，0
-    :param pred: 模型训练时预测的 每个时间步的 期望, 维度同 data
-    :param batch: 辨明当前的
-    :param epoch:当前的epoch
-    :param plot_num: 当前情况下需要输出的图片数量
-    :param plot_length: 当前序列画图的长度
-    :param time_start : 绘图的初始时间
-    :param freq : 当前的时间间隔
+    :param path: path to store picture
+    :param targets_name: dataset name
+    :param data: real dataset #(ssm_num , bs , seq , 1)
+    :param nan_data: fill missing data with nan_data
+    :param pred: prediction length
+    :param batch: batch number
+    :param epoch: epoch number
+    :param plot_num: picture number(random choice)
+    :param plot_length: training length
+    :param time_start : start time of the picture
+    :param freq : frequency of the dataset
     :return:
     '''
-    #先把多余的维度去除
     data = np.squeeze(data , -1)
     pred = np.squeeze(pred ,-1)
     root_path = os.path.join(path , 'train_pred_pic')
     if plot_num > data.shape[1]:
         plot_num = data.shape[1]
-    #当前采样
     samples_no = sample_without_put_back(np.arange(data.shape[1]) , plot_num)
     current_dir = os.path.join(root_path, 'epoch({})'.format(epoch))
     if not os.path.isdir(current_dir):
@@ -197,26 +186,14 @@ def plot_train_pred(path, targets_name, data, pred, batch, epoch, plot_num, plot
 
 def plot_train_pred_NoSSMnum(path, targets_name, data, pred, batch, epoch, ssm_no, plot_num, plot_length, time_start, freq, nan_data=0):
     '''
-    与上述函数相比，不同的是，data以及pred都没有ssm_num维
-    :param path: 存放图片的地址
-    :param targets_name 数据集的名
-    :param data: 真实数据 #( bs , seq , 1)
-    :param pred: 模型训练时预测的 每个时间步的 期望, 维度同 data
-    :param batch: 辨明当前的
-    :param epoch:当前的epoch
-    :param plot_num: 当前情况下需要输出的图片数量
-    :param plot_length: 画图序列的长度
-    :param time_start : 绘图的初始时间
-    :param freq : 当前的时间间隔
-    :return:
+    the same as `plot_train_pred`, but without dimension SSM
     '''
-    #先把多余的维度去除
+    # decline extra dimension
     data = np.squeeze(data , -1) #(bs, seq)
     pred = np.squeeze(pred ,-1)
     root_path = os.path.join(path , 'train_pred_pic')
     if plot_num > data.shape[1]:
         plot_num = data.shape[1]
-    #当前采样
     samples_no = sample_without_put_back(np.arange(data.shape[0]) , plot_num)
     current_dir = os.path.join(root_path, 'epoch({})'.format(epoch))
     if not os.path.isdir(current_dir):
@@ -270,10 +247,13 @@ def plot_train_epoch_loss(
     plt.savefig(os.path.join(path , 'train_%s.pdf'%(time)),format="pdf")
     plt.close(fig)
 
+
 def complete_batch(batch,batch_size):
-    # 如果这里不复制，则内存中还是只有一片空间，出现指针混乱！
+    """
+        complete the batch withoug enough samples
+    """
+    # deepcopy
     completed_batch = batch.copy()
-    # 对每一个 key都进行处理
     if len(completed_batch[FieldName.START]) == batch_size:
         return completed_batch , batch_size
     for attr in completed_batch.keys():
@@ -282,7 +262,6 @@ def complete_batch(batch,batch_size):
             batch_num = len(batch_value)
             completed_batch[attr] = batch_value + [batch_value[-1]]*(batch_size-batch_num)
         elif isinstance(batch_value, np.ndarray):
-            #表示所有非四维的
             if len(batch_value.shape) != TARGET_DIM:
                 batch_num = batch_value.shape[0]
                 complete_shape = [batch_size-batch_num]+list(batch_value.shape[1:])
@@ -296,8 +275,7 @@ def complete_batch(batch,batch_size):
 
 def del_previous_model_params(path):
     '''
-    :param path:  该组参数组的主目录
-    :return:  删除之前epoch的参数文件
+    delete previous model parameters
     '''
     if not os.path.isdir(path):
         return
@@ -309,8 +287,7 @@ def del_previous_model_params(path):
 
 def get_model_params_name(path):
     '''
-    :param path: 改组参数组的目录 ..../model_params
-    :return: 参数文件名
+    get params name
     '''
     if not os.path.isdir(path):
         return
@@ -321,25 +298,9 @@ def get_model_params_name(path):
             params_name = os.path.splitext(file)[0]
             return params_name
 
-# 画原有序列
-def plot_original(train_entry , test_entry , no):
-    test_series = to_pandas(test_entry)
-    train_series = to_pandas(train_entry)
 
-    fig, ax = plt.subplots(2, 1, sharex=True, sharey=True, figsize=(10, 7))
 
-    train_series.plot(ax=ax[0])
-    ax[0].grid(which="both")
-    ax[0].legend(["train series"], loc="upper left")
 
-    test_series.plot(ax=ax[1])
-    ax[1].axvline(train_series.index[-1], color='r')  # end of train dataset
-    ax[1].grid(which="both")
-    ax[1].legend(["prophet_compared series", "end of train series"], loc="upper left")
-
-    plt.savefig('pic/original_entry_{}.png'.format(no))
-
-# 给定序列的均值和方差，进行采样：
 def samples_with_mean_cov(mean: np.ndarray , cov:np.ndarray , num_samples: int):
     '''
     :param mean: (ssm_num, bs, pred, dim_z)
@@ -359,11 +320,10 @@ def samples_with_mean_cov(mean: np.ndarray , cov:np.ndarray , num_samples: int):
     return result
     pass
 
-'''
-根据要 reload 的path 修改 config的值
-'''
 def get_reload_hyper(path, config):
-       
+    '''
+    reload config
+    '''
     abbre = {
         'freq' : 'freq',
         'env' : 'environment',

@@ -248,9 +248,9 @@ class Trainer:
                             # if not whetherInputInList(inputs , all_result ,-1):
                             #     all_result.append(inputs)
                             #     if batch_no % 1 == 0 :
-                            #         print('当前第 ' ,batch_no , '正输入 all_data 中')
+                            #         print('input ' ,batch_no , 'to all_data..')
                             # else:
-                            #     print('输入结束了')
+                            #     print('end ')
                             #     break
                             # continue
 
@@ -291,7 +291,7 @@ class Trainer:
 
                     # with open('../lzl_deepstate/data/train_electricity_672_168.pkl', 'wb') as fp:
                     #     pickle.dump(all_result, fp)
-                    # print('已获取全部的数据')
+                    # print('get all data')
                     # exit()
 
                     # mark epoch end time and log time cost of current epoch

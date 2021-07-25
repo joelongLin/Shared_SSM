@@ -656,9 +656,9 @@ class DeepStateNetwork(object):
             + (self.train_log_path.split('/')[-1] if hasattr(self, 'train_log_path') else self.config.reload_model)
         ))
         model_result_path = add_time_mark_to_file(model_result_path)
-        print('当前结果保存在--->' , model_result_path)
+        print('result store in--->' , model_result_path)
         for batch_no, target_batch in enumerate(self.target_test_loader):
-            print('当前做Inference的第{}个batch的内容'.format(batch_no))
+            print('No.{} batch is predicting'.format(batch_no))
             if target_batch != None:
                 batch_concat = []
                 for i in range(self.ssm_num):

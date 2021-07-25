@@ -196,13 +196,12 @@ class SampleForecastGenerator(ForecastGenerator):
         for batch in inference_data_loader: # 这里会产生 batch_size 个 sample 组成的batch
             no_batch += 1 ;
             inputs = [batch[k] for k in input_names] # 每个batch 里面存在 16 个样本
-
+            
             # inputs = [np.squeeze(batch[k].asnumpy(), axis=0)
             #           if isinstance(batch[k] , mx.nd.NDArray)
             #           else batch[k][0]
             #           for k in input_names]
             # test_all_result.append(inputs)
-            # print('当前第 ' ,no_batch , '正输入 test_all_data(%d 存量) 中'%(len(test_all_result)) )
             # continue
 
             outputs = prediction_net(*inputs).asnumpy() #(bs, num_eval_sample, prediction_length)
@@ -223,8 +222,8 @@ class SampleForecastGenerator(ForecastGenerator):
                 ] #(batch_size , num_sample , predict_len)
                 assert len(outputs[0]) == num_samples
             i = -1
-            #相当于把每一个 batch 的结果都封装到一个 SampleForecast的类里面
-            print('当前正在处理第 %d 个 batch_no 的结果'%(no_batch))
+            
+            print('dealing with result of No. %d batch'%(no_batch))
             for i, output in enumerate(outputs):
                 yield SampleForecast(
                     output,
@@ -236,9 +235,3 @@ class SampleForecastGenerator(ForecastGenerator):
                     info=batch["info"][i] if "info" in batch else None,
                 )
             assert i + 1 == len(batch["forecast_start"])
-
-        # print('test_all_result 的长度大小为：', len(test_all_result))
-        # with open('../lzl_deepstate/data/test_electricity_336_168.pkl', 'wb') as fp:
-        #     pickle.dump(test_all_result, fp)
-        # print('已获取全部的测试数据')
-        # exit()

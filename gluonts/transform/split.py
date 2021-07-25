@@ -167,14 +167,11 @@ class InstanceSplitter(FlatMapTransformation):
         ) # 也就是说如果要完整的 InstanceSplitter， 那么每次都要取一整套 past + pred
 
         if is_train:
-            #也就是说这里面的 train 模型是默认我们序列长度大于等于 past + pred
-            # 但是我的数据集  len_target 要么为 past_length 要么为 future_length+past_length
-            # 也就是说 采样这个部分，我已经在预处理的时候，slice 了一遍相当于 尽采样
             sampling_bounds = (
                 (0, len_target - self.future_length)
                 if self.pick_incomplete
                 else (self.past_length, len_target - self.future_length)
-            )
+            )#也就是说这里面的 train 模型是默认我们序列长度大于等于 past + pred但是我的数据集  len_target 要么为 past_length 要么为 future_length+past_length也就是说 采样这个部分，我已经在预处理的时候，slice 了一遍相当于尽采样
 
             # We currently cannot handle time series that are
             # too short during training, so we just skip these.
