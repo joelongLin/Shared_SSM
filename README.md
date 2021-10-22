@@ -23,17 +23,17 @@ Please cite our work with
 
 ## Needed python package
 * Our Model is implemented by python3.6.5 with tensorflow1.14
-* There are serveral baseline are use mxnet. This work get a lot of help from Amazon gluonts, you can use `pip install gluonts` to help you install major of packages
+* There are serveral baseline are implemented by mxnet. This work get a lot of help from Amazon gluonts, you can use `pip install gluonts` to help you install major of packages
 
 ## Quick Start
 
 1. **use shell script to train models and make prediction** : 
-   * You Can use `bin/run_shared_ssm.sh` to quickly run our Shared State Space Model.  The Hyperparameter are the same as the paper.
+   * You Can use `bin/run_shared_ssm.sh` to quickly run our Shared State Space Model.  The Hyperparameter are set same range as the paper.
    *  Other baseline script are also put in the same folder and named as `bin/run_{BASELINE}.sh`
-2. **evaluate our result** :
+2. **evaluate prediction of models** :
    * you can use `python evaluate/acc_result.py` to checkout accuracy or you can use `python evaluate/rmse_result.py` to checkout the rmse
-
-NOTE: <u>debug with right working space</u> : you should checkout that every python script run under `gluonts/lzl_shared_ssm` if you want to `debug` our code.
+3. <u>debug with right working space</u>
+   * you should checkout that every python script run under `gluonts/lzl_shared_ssm` if you want to `debug` our code.
 
 
 ## Models Source Code
