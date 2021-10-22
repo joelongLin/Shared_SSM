@@ -3,7 +3,7 @@ This is source code of "Shared State Space Model for Background Information Extr
 
 Author: Ruichu Cai, Zhaolong Lin, Wei Chen, Zhifeng Hao
 
-Please cite our work with 
+If this work helps you, please cite our work with bibtex below
 ```
 @article{cai2021shared,
   title={Shared State Space Model for Background Information Extraction and Time Series Prediction},
