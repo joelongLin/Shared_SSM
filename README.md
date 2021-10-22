@@ -1,6 +1,18 @@
 # README
-This is source code of "Shared State Space Model for Background Information Extraction and Time Series Prediction"
+This is source code of "Shared State Space Model for Background Information Extraction and Time Series Prediction" (accepted by Neurocomputing)
+
 Author: Ruichu Cai, Zhaolong Lin, Wei Chen, Zhifeng Hao
+
+Please cite our work with 
+```
+@article{cai2021shared,
+  title={Shared State Space Model for Background Information Extraction and Time Series Prediction},
+  author={Cai, Ruichu and Lin, Zhaolong and Chen, Wei and Hao, Zhifeng},
+  journal={Neurocomputing},
+  year={2021},
+  publisher={Elsevier}
+}
+```
 
 ## Data Preparing
 * Download [gold](https://finance.yahoo.com/quote/GOLD/history?p=GOLD) and rename it as `GOLD.csv` ,then put it under `gluonts/lzl_shared_ssm/data_process/raw_data` or Use the dataset in the `/attachment`
