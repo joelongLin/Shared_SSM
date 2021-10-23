@@ -65,11 +65,3 @@ def main(_):
 if __name__ == '__main__':
    tf.app.run()
 
-
-# for i in config:
-#     try:
-#         print(i , ':' , eval('config.{}'.format(i)))
-#     except:
-#         print('当前 ' , i ,' 属性获取有问题')
-#         continue
-# exit()

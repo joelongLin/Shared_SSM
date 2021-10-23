@@ -442,7 +442,7 @@ class Common_LSTM(object):
 
         
         for batch_no , target_batch in enumerate(self.target_test_loader):
-            print('当前做Inference的第{}个batch的内容'.format(batch_no))
+            print('No.{} batch is predicting'.format(batch_no))
             if target_batch != None :
                 batch_concat = []
                 for i in range(self.ssm_num):

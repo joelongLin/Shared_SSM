@@ -13,6 +13,7 @@ If this work helps you, please cite our work with bibtex below
   publisher={Elsevier}
 }
 ```
+You can read our paper in [this link](https://www.sciencedirect.com/science/article/pii/S0925231221014880).
 
 ## Data Preparing
 * Download [gold](https://finance.yahoo.com/quote/GOLD/history?p=GOLD) and rename it as `GOLD.csv` ,then put it under `gluonts/lzl_shared_ssm/data_process/raw_data` or Use the dataset in the `/attachment`
